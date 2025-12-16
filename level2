@@ -1,0 +1,397 @@
+from OpenGL.GL import *
+from OpenGL.GLUT import *
+from OpenGL.GLU import *
+from OpenGL.GLUT import GLUT_BITMAP_HELVETICA_18
+import math
+import random
+
+# ==========================================
+# Global Configuration (Level 2)
+# ==========================================
+WINDOW_WIDTH = 1024
+WINDOW_HEIGHT = 768
+
+# Scale Factors
+MAP_DIM = 100        # Slightly smaller dimension but denser maze
+CELL_SIZE = 20      
+WALL_HEIGHT = 50    
+
+# Cell Types
+C_EMPTY = 0
+C_WALL = 1
+C_SPIKE = 2          # New Trap Type
+C_START = 3
+C_EXIT = 4
+
+# Map Data
+map_data = []       
+display_list = None 
+
+# --- ENTITY LISTS ---
+spears = []          # Projectiles thrown by spikes
+particles = [] 
+
+# --- TRAP STATE ---
+spike_timer = 0.0    # Controls the pop-up rhythm
+spikes_active = False
+
+# --- PLAYER STATE ---
+player_pos = [0, 0, 0]
+player_angle = 1.57 
+base_speed = 2.5 
+player_speed = base_speed
+key_states = {}
+
+# Stats
+player_hp = 100.0
+game_over = False
+level_complete = False 
+global_time = 0.0
+
+# ==========================================
+# 1. Map Generation (Complex Maze with Loops)
+# ==========================================
+def generate_level_2():
+    global map_data, player_pos, display_list, spears, particles
+    
+    # 1. Fill with Walls
+    map_data = [[C_WALL for _ in range(MAP_DIM)] for _ in range(MAP_DIM)]
+    spears = []
+    particles = []
+    
+    start_x, start_y = 5, 5
+    
+    # --- 2. DIG PATHS (Random Walkers) ---
+    # We use more walkers with longer lives to create a "Swiss Cheese" effect (Loops)
+    diggers = []
+    for _ in range(40): # More diggers than Level 1 for complexity
+        rx = random.randint(5, MAP_DIM-5)
+        ry = random.randint(5, MAP_DIM-5)
+        diggers.append({'x': rx, 'y': ry, 'life': random.randint(200, 400)})
+
+    # Force start zone clear
+    diggers.append({'x': start_x, 'y': start_y, 'life': 500})
+
+    for digger in diggers:
+        cx, cy = digger['x'], digger['y']
+        life = digger['life']
+        
+        while life > 0:
+            # Carve 
+            if 0 < cx < MAP_DIM-1 and 0 < cy < MAP_DIM-1:
+                map_data[cx][cy] = C_EMPTY
+            
+            # Move
+            move = random.choice([(0,1), (0,-1), (1,0), (-1,0)])
+            cx += move[0]
+            cy += move[1]
+            cx = max(2, min(MAP_DIM-3, cx))
+            cy = max(2, min(MAP_DIM-3, cy))
+            
+            # Randomly punch holes in walls to create loops (The "Complexity")
+            if random.random() < 0.05: 
+                 # Jump 2 steps to punch through a thin wall
+                 cx += move[0]
+                 cy += move[1]
+            
+            life -= 1
+
+    # --- 3. PLACE SPIKE TRAPS ---
+    # Randomly convert empty floor to spikes
+    for x in range(MAP_DIM):
+        for y in range(MAP_DIM):
+            if map_data[x][y] == C_EMPTY:
+                # Keep start area clear
+                dist = math.sqrt((x-start_x)**2 + (y-start_y)**2)
+                if dist > 10: 
+                    if random.random() < 0.08: # 8% chance for a spike trap
+                        map_data[x][y] = C_SPIKE
+
+    # --- 4. START & EXIT ---
+    player_pos = [start_x * CELL_SIZE, 20, start_y * CELL_SIZE]
+    
+    # Simple Exit at far corner
+    map_data[MAP_DIM-5][MAP_DIM-5] = C_EXIT
+
+    if display_list:
+        glDeleteLists(display_list, 1)
+        display_list = None
+
+# ==========================================
+# 2. Visuals
+# ==========================================
+def create_display_list():
+    global display_list
+    display_list = glGenLists(1)
+    glNewList(display_list, GL_COMPILE)
+    
+    for x in range(MAP_DIM):
+        for z in range(MAP_DIM):
+            cell = map_data[x][z]
+            wx = x * CELL_SIZE
+            wz = z * CELL_SIZE
+            
+            if cell == C_WALL:
+                # Reddish Brown Walls
+                glPushMatrix()
+                glTranslatef(wx, WALL_HEIGHT/2, wz)
+                glScalef(1, WALL_HEIGHT/CELL_SIZE, 1)
+                glColor3f(0.6, 0.3, 0.2) # Reddish Brown
+                glutSolidCube(CELL_SIZE)
+                # Add a metallic rim
+                glColor3f(0.4, 0.2, 0.1)
+                glutWireCube(CELL_SIZE) 
+                glPopMatrix()
+                
+            elif cell == C_EMPTY or cell == C_SPIKE or cell == C_START or cell == C_EXIT:
+                # Silver Ash Ground
+                glBegin(GL_QUADS)
+                # Metallic variation
+                if (x+z)%2 == 0: glColor3f(0.75, 0.75, 0.75) # Silver
+                else: glColor3f(0.70, 0.70, 0.75) # Ash
+                
+                glVertex3f(wx-10, 0, wz-10); glVertex3f(wx+10, 0, wz-10)
+                glVertex3f(wx+10, 0, wz+10); glVertex3f(wx-10, 0, wz+10)
+                glEnd()
+                
+                if cell == C_EXIT:
+                    glPushMatrix()
+                    glTranslatef(wx, 10, wz)
+                    glColor3f(1, 0.8, 0) # Gold Exit
+                    glutSolidTorus(2, 5, 10, 10)
+                    glPopMatrix()
+
+    glEndList()
+
+def draw_dynamic_objects():
+    # 1. SPIKES
+    # Pop-up animation based on global sine wave
+    spike_height = 0
+    # Logic: Sine wave goes -1 to 1. We map it so spikes are hidden half the time, up half the time.
+    val = math.sin(global_time * 2) # Speed of pop-up
+    
+    # Visual height
+    if val < 0: h = 0 
+    else: h = val * 15 # Max height 15
+    
+    glColor3f(0.4, 0.4, 0.4) # Dark Grey Metal
+    for x in range(MAP_DIM):
+        for z in range(MAP_DIM):
+            if map_data[x][z] == C_SPIKE:
+                wx = x * CELL_SIZE
+                wz = z * CELL_SIZE
+                
+                glPushMatrix()
+                glTranslatef(wx, h, wz) # Move up/down
+                glRotatef(-90, 1, 0, 0) # Point up
+                glutSolidCone(5, 15, 6, 2) # Metallic Spike
+                glPopMatrix()
+
+    # 2. THROWN SPEARS
+    glColor3f(0.9, 0.9, 0.1) # Yellowish tinge for visibility
+    glLineWidth(2)
+    glBegin(GL_LINES)
+    for s in spears:
+        glVertex3f(s['x'], 10, s['z'])
+        # Draw a tail to see direction
+        glVertex3f(s['x'] - s['dx']*3, 10, s['z'] - s['dz']*3)
+    glEnd()
+    glLineWidth(1)
+
+# ==========================================
+# 3. Logic & Physics
+# ==========================================
+def update_physics():
+    global player_pos, player_angle, global_time, player_hp, game_over, level_complete, spears, spikes_active
+    
+    if game_over or level_complete: return
+
+    global_time += 0.05
+    
+    # --- TRAP LOGIC ---
+    # Determine if spikes are currently "Active" (fully extended)
+    # Sine wave > 0.5 means they are dangerous and high
+    val = math.sin(global_time * 2)
+    was_active = spikes_active
+    spikes_active = val > 0.2 # Threshold for damage
+    
+    # 1. SPIKE DAMAGE (Standing on them)
+    gx = int(round(player_pos[0] / CELL_SIZE))
+    gz = int(round(player_pos[2] / CELL_SIZE))
+    
+    if 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM:
+        if map_data[gx][gz] == C_SPIKE:
+            if spikes_active:
+                player_hp -= 0.25 # -5 HP roughly per second (0.25 * 20 frames)
+                # Visual feedback
+                if random.random() < 0.5:
+                   print("Ouch! Spikes!")
+
+    # 2. THROW SPEARS (When spikes reach peak)
+    # Trigger once when wave passes a certain point
+    if not was_active and spikes_active: # Rising edge
+        # Iterate all spikes and random chance to throw
+        for x in range(MAP_DIM):
+            for z in range(MAP_DIM):
+                if map_data[x][z] == C_SPIKE:
+                    # Random direction check
+                    if random.random() < 0.05: # 5% of spikes throw a spear per cycle
+                        angle = random.uniform(0, 6.28)
+                        spears.append({
+                            'x': x * CELL_SIZE,
+                            'z': z * CELL_SIZE,
+                            'dx': math.sin(angle),
+                            'dz': math.cos(angle),
+                            'life': 100 # Frames before disappearing
+                        })
+
+    # 3. UPDATE SPEARS
+    active_spears = []
+    for s in spears:
+        speed = 4.0
+        s['x'] += s['dx'] * speed
+        s['z'] += s['dz'] * speed
+        s['life'] -= 1
+        
+        # Wall Collision
+        sx = int(round(s['x'] / CELL_SIZE))
+        sz = int(round(s['z'] / CELL_SIZE))
+        hit_wall = False
+        if 0 <= sx < MAP_DIM and 0 <= sz < MAP_DIM:
+            if map_data[sx][sz] == C_WALL:
+                hit_wall = True
+        else:
+            hit_wall = True # Out of bounds
+            
+        # Player Collision
+        dist = math.sqrt((s['x'] - player_pos[0])**2 + (s['z'] - player_pos[2])**2)
+        if dist < 8: # Hit player
+            player_hp -= 1.0
+            print("Hit by Spear! -1 HP")
+            hit_wall = True # Destroy spear
+            
+        if not hit_wall and s['life'] > 0:
+            active_spears.append(s)
+            
+    spears = active_spears
+
+    # --- MOVEMENT (Standard) ---
+    move_speed = 0; strafe = 0
+    if key_states.get(b'w'): move_speed = player_speed
+    if key_states.get(b's'): move_speed = -player_speed
+    if key_states.get(b'a'): strafe = -player_speed
+    if key_states.get(b'd'): strafe = player_speed
+    
+    if key_states.get(GLUT_KEY_LEFT): player_angle -= 0.04
+    if key_states.get(GLUT_KEY_RIGHT): player_angle += 0.04
+    
+    dx = math.sin(player_angle) * move_speed
+    dz = -math.cos(player_angle) * move_speed
+    sdx = math.sin(player_angle + 1.57) * strafe
+    sdz = -math.cos(player_angle + 1.57) * strafe
+    
+    nx = player_pos[0] + dx + sdx
+    nz = player_pos[2] + dz + sdz
+    
+    # Collision
+    gx = int(round(nx / CELL_SIZE))
+    gz = int(round(nz / CELL_SIZE))
+    
+    if 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM:
+        if map_data[gx][gz] != C_WALL:
+            player_pos[0] = nx
+            player_pos[2] = nz
+            if map_data[gx][gz] == C_EXIT:
+                level_complete = True
+    
+    if player_hp <= 0: game_over = True
+
+# ==========================================
+# Drawing Utils
+# ==========================================
+def draw_hud():
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
+    gluOrtho2D(0, WINDOW_WIDTH, 0, WINDOW_HEIGHT)
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
+    glDisable(GL_DEPTH_TEST)
+
+    glColor3f(1, 0, 0)
+    glRasterPos2f(20, WINDOW_HEIGHT - 30)
+    msg = f"LEVEL 2 - HP: {int(player_hp)}"
+    for ch in msg: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+    
+    glColor3f(1, 1, 1)
+    glRasterPos2f(20, WINDOW_HEIGHT - 60)
+    msg2 = "Watch out for Spikes and Spears!"
+    for ch in msg2: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+
+    if game_over:
+        glColor3f(1, 0, 0)
+        glRasterPos2f(WINDOW_WIDTH/2 - 50, WINDOW_HEIGHT/2)
+        for ch in "DIED IN THE IRON MAZE": glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+        
+    if level_complete:
+        glColor3f(0, 1, 0)
+        glRasterPos2f(WINDOW_WIDTH/2 - 80, WINDOW_HEIGHT/2)
+        for ch in "LEVEL 2 COMPLETE!": glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+
+    glEnable(GL_DEPTH_TEST)
+    glMatrixMode(GL_PROJECTION); glPopMatrix()
+    glMatrixMode(GL_MODELVIEW); glPopMatrix()
+
+def setup_camera():
+    glMatrixMode(GL_PROJECTION); glLoadIdentity()
+    gluPerspective(60, WINDOW_WIDTH/WINDOW_HEIGHT, 1, 1000)
+    glMatrixMode(GL_MODELVIEW); glLoadIdentity()
+    lx = player_pos[0] + math.sin(player_angle) * 100
+    lz = player_pos[2] - math.cos(player_angle) * 100
+    gluLookAt(player_pos[0], 25, player_pos[2], lx, 25, lz, 0, 1, 0)
+
+# ==========================================
+# GLUT Callbacks
+# ==========================================
+def showScreen():
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+    setup_camera()
+    
+    if display_list is None: create_display_list()
+    glCallList(display_list)
+    
+    draw_dynamic_objects()
+    draw_hud()
+    glutSwapBuffers()
+
+def idle():
+    update_physics()
+    glutPostRedisplay()
+
+def keyDown(key, x, y):
+    key_states[key] = True
+    key_states[key.lower()] = True 
+    if key == b'r': generate_level_2() # Restart Level
+
+def keyUp(key, x, y): 
+    key_states[key] = False
+    key_states[key.lower()] = False
+
+def specialDown(key, x, y): 
+    key_states[key] = True
+
+def specialUp(key, x, y): 
+    key_states[key] = False
+
+def main():
+    glutInit()
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
+    glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT)
+    glutCreateWindow(b"Level 2: The Iron Gauntlet")
+    glEnable(GL_DEPTH_TEST)
+    generate_level_2()
+    glutDisplayFunc(showScreen)
+    glutIdleFunc(idle)
+    glutKeyboardFunc(keyDown); glutKeyboardUpFunc(keyUp)
+    glutSpecialFunc(specialDown); glutSpecialUpFunc(specialUp)
+    glutMainLoop()
+
+if __name__ == "__main__":
+    main()
