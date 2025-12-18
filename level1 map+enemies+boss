@@ -28,9 +28,11 @@ C_ACID = 2
 C_BOSS = 3
 C_START = 4
 C_GATE = 5
+C_EXIT = 6
 
 # Map Data
-map_data = []       
+map_data = [] 
+solution_path = []  
 display_list = None 
 
 # --- ENTITY LISTS ---
@@ -61,9 +63,9 @@ rain_duration = 0
 # --- PLAYER STATE ---
 player_pos = [0, 0, 0]
 player_angle = 1.57 
-base_speed = 3.5 
+base_speed = 5 
 player_speed = base_speed
-boss_speed = 2.0 # Slow boss
+boss_speed = 3.5 # Faster boss (increased from 2.0)
 enemy_speed = base_speed / 9.0 
 animal_speed = base_speed / 3.0 
 dagger_speed = 15.0 
@@ -71,10 +73,10 @@ dagger_speed = 15.0
 key_states = {}
 
 # Stats
-player_hp = 500.0
-max_player_hp = 800.0
-player_ammo = 25 
-inventory = [] 
+player_hp = 5000.0
+max_player_hp = 8000.0
+player_ammo = 25000
+inventory = ["Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle" , "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle"] 
 immunity_timer = 0 
 has_green_gem = False
 
@@ -91,6 +93,55 @@ acid_level = 0.0
 game_over = False
 level_complete = False 
 map_visible = False 
+
+
+def solve_maze():
+    global solution_path
+    
+    # 1. Define Start (Player Spawn) & End (Boss) Grid Coordinates
+    start_node = (10, 10) 
+    target_gx = int(boss_obj['x'] // CELL_SIZE)
+    target_gz = int(boss_obj['z'] // CELL_SIZE)
+    target_node = (target_gx, target_gz)
+    
+    # 2. BFS Algorithm
+    queue = [start_node]
+    visited = {start_node}
+    came_from = {start_node: None}
+    
+    found_dest = None
+    
+    while queue:
+        current = queue.pop(0)
+        
+        # If we reached the boss center or inside boss arena
+        if current == target_node or map_data[current[0]][current[1]] == C_BOSS:
+            found_dest = current
+            break
+            
+        for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+            nx, ny = current[0] + dx, current[1] + dy
+            
+            # Bounds check
+            if 0 <= nx < MAP_DIM and 0 <= ny < MAP_DIM:
+                if (nx, ny) not in visited:
+                    # Valid path? (Not a wall)
+                    if map_data[nx][ny] != C_WALL:
+                        visited.add((nx, ny))
+                        came_from[(nx, ny)] = current
+                        queue.append((nx, ny))
+    
+    # 3. Reconstruct Path
+    path = []
+    if found_dest:
+        curr = found_dest
+        while curr:
+            path.append(curr)
+            curr = came_from[curr]
+        # Reverse to get Start -> End
+        path.reverse()
+        
+    solution_path = path
 
 # ==========================================
 # 1. Map Generation
@@ -214,8 +265,7 @@ def generate_level_1():
             v_tunnel(y1, y2, x1)
             h_tunnel(x1, x2, y2)
 
-    # --- C. FINALIZE BOSS ARENA (Enclosed) ---
-    # 1. Define bounds
+    # --- C. FINALIZE BOSS ARENA (Enclosed + Swampy) ---
     b_x = MAP_DIM - 35
     b_y = MAP_DIM - 35
     b_w = 30
@@ -234,18 +284,22 @@ def generate_level_1():
                     map_data[cx][cy] = C_WALL
                 else:
                     # Inside is the Arena
-                    map_data[cx][cy] = C_BOSS
+                    # [Requirement] Extra acid pools/swamps inside the arena (30% chance)
+                    if random.random() < 0.3:
+                        map_data[cx][cy] = C_ACID
+                    else:
+                        map_data[cx][cy] = C_BOSS
 
     # --- D. PLACE GATE ---
-    # The entrance is on the Left side of the arena
-    # We open a gap in the wall we just made and place the Gate
+    # Entrance on the Left Wall
     gate_x = b_x - 1
     mid_y = b_y + (b_h // 2)
     
-    for k in range(-4, 5): # 9-block wide gate
+    # 7-block wide gate
+    for k in range(-3, 4): 
         if 0 <= gate_x < MAP_DIM and 0 <= mid_y + k < MAP_DIM:
             map_data[gate_x][mid_y + k] = C_GATE
-            # Ensure the tile immediately outside the gate is empty for access
+            # Ensure immediate entry path is clear
             if gate_x - 1 >= 0:
                 map_data[gate_x - 1][mid_y + k] = C_EMPTY
 
@@ -280,15 +334,23 @@ def generate_level_1():
         rx = random.randint(10, MAP_DIM-10)
         rz = random.randint(10, MAP_DIM-10)
         if map_data[rx][rz] == C_EMPTY:
-            dist_start = math.sqrt((rx*CELL_SIZE - 60)**2 + (rz*CELL_SIZE - 60)**2)
+            dist_start = math.sqrt((rx*CELL_SIZE - start_room['center'][0]*CELL_SIZE)**2 + (rz*CELL_SIZE - start_room['center'][1]*CELL_SIZE)**2)
             if dist_start > 800:
-                poison_ghosts.append({'x': rx*CELL_SIZE, 'z': rz*CELL_SIZE, 'life': 1})
+                poison_ghosts.append({
+                    'x': rx*CELL_SIZE, 
+                    'z': rz*CELL_SIZE, 
+                    'stun_timer': 0,
+                    'state': 'ROAM',  # Start roaming
+                    'seen_timer': 0   # How long player has been looking at it
+                })
 
     boss_obj['x'] = (boss_room['x'] + 15) * CELL_SIZE
     boss_obj['z'] = (boss_room['y'] + 15) * CELL_SIZE
     boss_obj['hp'] = 500
     player_pos = [start_room['center'][0] * CELL_SIZE, 20, start_room['center'][1] * CELL_SIZE]
     
+    solve_maze()
+
     if display_list:
         glDeleteLists(display_list, 1)
         display_list = None
@@ -512,8 +574,8 @@ def draw_entities():
             glColor3f(0.0, 0.5, 1.0)
             glScalef(0.6, 1.5, 0.6)
             glutSolidCube(6)
-        elif l['type'] == 'DIAMOND_KEY':
-            glColor3f(0.0, 1.0, 1.0)
+        elif l['type'] == 'POISON_GEM':
+            glColor3f(0.5, 0.0, 1.0) # Purple Gem
             glScalef(1.5, 1.5, 1.5)
             glScalef(1, 2, 1)
             glutSolidOctahedron()
@@ -559,6 +621,7 @@ def in_boss_arena(pos, padding=0):
     return (start_x - padding < pos[0] < end_x + padding) and \
            (start_z - padding < pos[2] < end_z + padding)
 
+
 def draw_minimap():
     glDisable(GL_DEPTH_TEST) 
     glMatrixMode(GL_PROJECTION)
@@ -569,9 +632,12 @@ def draw_minimap():
     glPushMatrix()
     glLoadIdentity()
 
-    # Box
+    # Minimap Background
     map_size = 150
     margin = 20
+    world_max = MAP_DIM * CELL_SIZE
+    
+    # Draw Box
     glColor3f(0.2, 0.2, 0.2)
     glBegin(GL_QUADS)
     glVertex2f(margin, margin)
@@ -580,7 +646,7 @@ def draw_minimap():
     glVertex2f(margin, margin+map_size)
     glEnd()
 
-    # Border
+    # Draw Border
     glColor3f(1, 1, 1)
     glLineWidth(2)
     glBegin(GL_LINE_LOOP)
@@ -590,7 +656,32 @@ def draw_minimap():
     glVertex2f(margin, margin+map_size)
     glEnd()
 
-    world_max = MAP_DIM * CELL_SIZE
+    # --- CHEAT MODE: DRAW STATIC SOLUTION PATH ---
+    if map_visible and solution_path:
+        glColor3f(1, 1, 0) # Yellow Line
+        glLineWidth(2)
+        glBegin(GL_LINE_STRIP)
+        for node in solution_path:
+            # Convert Grid Coordinates to Minimap Pixels
+            mx = margin + (node[0] * CELL_SIZE / world_max) * map_size
+            my = margin + (node[1] * CELL_SIZE / world_max) * map_size
+            glVertex2f(mx, my)
+        glEnd()
+        glLineWidth(1)
+        
+        # Show Ghosts in Cheat Mode
+        glColor3f(0, 1, 1) 
+        for g in poison_ghosts:
+            gx = (g['x'] / world_max) * map_size
+            gz = (g['z'] / world_max) * map_size
+            glPushMatrix()
+            glTranslatef(margin + gx, margin + gz, 0)
+            glBegin(GL_QUADS)
+            glVertex2f(-2, -2); glVertex2f(2, -2); glVertex2f(2, 2); glVertex2f(-2, 2)
+            glEnd()
+            glPopMatrix()
+
+    # Draw Player Dot
     px = (player_pos[0] / world_max) * map_size
     py = (player_pos[2] / world_max) * map_size
     
@@ -605,7 +696,7 @@ def draw_minimap():
     glEnd()
     glPopMatrix()
     
-    # Boss
+    # Draw Boss Icon
     if not boss_defeated:
         bx = (boss_obj['x'] / world_max) * map_size
         bz = (boss_obj['z'] / world_max) * map_size
@@ -613,25 +704,7 @@ def draw_minimap():
         glPushMatrix()
         glTranslatef(margin + bx, margin + bz, 0)
         glBegin(GL_QUADS)
-        glVertex2f(-3, -3)
-        glVertex2f(3, -3)
-        glVertex2f(3, 3)
-        glVertex2f(-3, 3)
-        glEnd()
-        glPopMatrix()
-
-    # Ghosts (Show on Minimap)
-    glColor3f(0, 1, 1) # Cyan
-    for g in poison_ghosts:
-        gx = (g['x'] / world_max) * map_size
-        gz = (g['z'] / world_max) * map_size
-        glPushMatrix()
-        glTranslatef(margin + gx, margin + gz, 0)
-        glBegin(GL_QUADS)
-        glVertex2f(-2, -2)
-        glVertex2f(2, -2)
-        glVertex2f(2, 2)
-        glVertex2f(-2, 2)
+        glVertex2f(-3, -3); glVertex2f(3, -3); glVertex2f(3, 3); glVertex2f(-3, 3)
         glEnd()
         glPopMatrix()
 
@@ -639,7 +712,7 @@ def draw_minimap():
     glPopMatrix()
     glMatrixMode(GL_MODELVIEW)
     glPopMatrix()
-    glEnable(GL_DEPTH_TEST) 
+    glEnable(GL_DEPTH_TEST)
 
 def draw_hud():
     glMatrixMode(GL_PROJECTION)
@@ -736,7 +809,7 @@ def in_boss_arena(pos, padding=0):
     return (bx - half_size < pos[0] < bx + half_size) and (bz - half_size < pos[2] < bz + half_size)
 
 def close_boss_gate():
-    global display_list
+    global display_list, enemies
     # Match the gate position from generate_level_1
     b_x = MAP_DIM - 35
     b_y = MAP_DIM - 35
@@ -752,6 +825,17 @@ def close_boss_gate():
         glDeleteLists(display_list, 1)
         display_list = None
         create_display_list()
+
+    # Initial Boss Minions (20 Slimes)
+    arena_center_x = (MAP_DIM - 20) * CELL_SIZE
+    arena_center_z = (MAP_DIM - 20) * CELL_SIZE
+    for _ in range(20):
+        enemies.append({
+            'x': arena_center_x, 
+            'z': arena_center_z, 
+            'home_x': arena_center_x, 
+            'home_z': arena_center_z
+        })
 
 def check_sprint():
     global is_sprinting
@@ -779,58 +863,103 @@ def update_physics():
             boss_active = True
             close_boss_gate()
 
-    # Boss Logic
+    # --- BOSS LOGIC ---
     if boss_active:
         boss_obj['timer'] += 1
+        
+        # [Requirement] Boss strictly inside arena
+        # Define Arena Bounds (World Coords)
+        arena_min_x = (MAP_DIM - 35) * CELL_SIZE + CELL_SIZE
+        arena_max_x = (MAP_DIM - 5) * CELL_SIZE - CELL_SIZE
+        arena_min_z = (MAP_DIM - 35) * CELL_SIZE + CELL_SIZE
+        arena_max_z = (MAP_DIM - 5) * CELL_SIZE - CELL_SIZE
+
         dx = boss_obj['x'] - player_pos[0]
         dz = boss_obj['z'] - player_pos[2]
         dist = math.sqrt(dx*dx + dz*dz)
         
-        # Evasion: Run away
-        if dist < 250:
-            if dist > 0: dx /= dist; dz /= dist
-            boss_obj['x'] -= dx * boss_speed
-            boss_obj['z'] -= dz * boss_speed
-            
-            gx = int(boss_obj['x'] // CELL_SIZE)
-            gz = int(boss_obj['z'] // CELL_SIZE)
-            if map_data[gx][gz] not in [C_BOSS, C_EMPTY]:
-                 boss_obj['x'] += dx * boss_speed
-                 boss_obj['z'] += dz * boss_speed
+        # [Requirement] Boss Teleport Logic
+        # Condition: Player too close OR random cornered check
+        if dist < 300 and boss_obj['teleport_cd'] <= 0:
+             # Find a spot FAR from player, INSIDE ARENA
+             best_tx, best_tz = boss_obj['x'], boss_obj['z']
+             max_d = -1
+             
+             # Try 10 random spots in arena, pick furthest from player
+             for _ in range(10):
+                 rx = random.uniform(arena_min_x, arena_max_x)
+                 rz = random.uniform(arena_min_z, arena_max_z)
                  
-        # Boss Teleport
-        if boss_obj['teleport_cd'] <= 0 and dist < 80:
-             cx = MAP_DIM - 25
-             cy = MAP_DIM - 25
-             rx = random.randint(cx-10, cx+10)
-             ry = random.randint(cy-10, cy+10)
-             boss_obj['x'] = rx * CELL_SIZE
-             boss_obj['z'] = ry * CELL_SIZE
-             boss_obj['teleport_cd'] = 200
-             for _ in range(20): particles.append({'x': boss_obj['x'], 'y': 10, 'z': boss_obj['z'], 'life': 30, 'dx': random.uniform(-2,2), 'dy': random.uniform(-2,2), 'dz': random.uniform(-2,2)})
-
+                 d_p = math.sqrt((rx - player_pos[0])**2 + (rz - player_pos[2])**2)
+                 if d_p > max_d:
+                     max_d = d_p
+                     best_tx, best_tz = rx, rz
+             
+             boss_obj['x'] = best_tx
+             boss_obj['z'] = best_tz
+             boss_obj['teleport_cd'] = 200 # 3-4 seconds cooldown
+             
+             for _ in range(30): particles.append({'x': boss_obj['x'], 'y': 10, 'z': boss_obj['z'], 'life': 30, 'dx': random.uniform(-3,3), 'dy': random.uniform(-3,3), 'dz': random.uniform(-3,3)})
+        
         if boss_obj['teleport_cd'] > 0: boss_obj['teleport_cd'] -= 1
 
         if boss_obj['timer'] % 800 == 0: 
             rain_active = True
             rain_duration = 300
-        if boss_obj['timer'] % 600 == 0: 
-             enemies.append({'x': boss_obj['x'], 'z': boss_obj['z'], 'home_x': boss_obj['x'], 'home_z': boss_obj['z']})
-        # Gas Bubbles
-        if boss_obj['timer'] % 600 == 0:
-             gas_clouds.append({'x': boss_obj['x'], 'z': boss_obj['z'], 'life': 600, 'dx': (player_pos[0]-boss_obj['x'])/100.0, 'dz': (player_pos[2]-boss_obj['z'])/100.0, 'type': 'BOSS'})
+            boss_obj['rain_center_x'] = player_pos[0]
+            boss_obj['rain_center_z'] = player_pos[2]
+            
+        # [Requirement] MAINTAIN 20 Gas (Slimes spawn on death)
+        current_gas = 0
+        for g in gas_clouds:
+             if in_boss_arena([g['x'], 0, g['z']], 0): current_gas += 1
+             
+        while current_gas < 20:
+             # Spawn Gas at Boss, Random Direction
+             angle = random.uniform(0, 6.28)
+             g_speed = 0.3
+             gas_clouds.append({
+                 'x': boss_obj['x'], 'z': boss_obj['z'], 
+                 'y_base': 40, 'life': 1200, 
+                 'dx': math.sin(angle)*g_speed, 'dz': math.cos(angle)*g_speed, 
+                 'type': 'BOSS',
+                 'home_x': boss_obj['x'], 'home_z': boss_obj['z'] 
+             })
+             current_gas += 1
 
     if rain_active:
         rain_duration -= 1
         if rain_duration <= 0: rain_active = False
-        if immunity_timer <= 0: player_hp -= 0.05
-        for _ in range(5):
-             rain_drops.append({'x': player_pos[0]+random.randint(-200,200), 'y': 200, 'z': player_pos[2]+random.randint(-200,200)})
+        
+        # [Requirement] Acid Rain (Increased area)
+        # Using 600 units radius (20 tiles)
+        if immunity_timer <= 0:
+            dist_to_rain = math.sqrt((player_pos[0] - boss_obj.get('rain_center_x', 0))**2 + (player_pos[2] - boss_obj.get('rain_center_z', 0))**2)
+            if dist_to_rain < 600:
+                 player_hp -= 0.05
+                 
+        for _ in range(8):
+             # Visuals concentrated in the area
+             rcx = boss_obj.get('rain_center_x', player_pos[0])
+             rcz = boss_obj.get('rain_center_z', player_pos[2])
+             rain_drops.append({'x': rcx+random.randint(-600,600), 'y': 200, 'z': rcz+random.randint(-600,600)})
         new_rain = []
         for r in rain_drops:
             r['y'] -= 5
             if r['y'] > 0: new_rain.append(r)
         rain_drops = new_rain
+        
+    # [Requirement] Exit Gate appears after boss defeat
+    if boss_defeated:
+         
+         ex_x = (MAP_DIM - 25) * CELL_SIZE
+         ex_z = (MAP_DIM - 35) * CELL_SIZE
+         dist_exit = math.sqrt((player_pos[0] - ex_x)**2 + (player_pos[2] - ex_z)**2)
+         
+         if dist_exit < 50:
+             if "Poison Gem Stone" in inventory:
+                 level_complete = True
+                 print("LEVEL COMPLETE! ENTERING NEXT LEVEL...")
 
     # Movement
     move_speed = 0; strafe = 0
@@ -868,7 +997,8 @@ def update_physics():
     final_dx = dx + sdx
     final_dz = dz + sdz
     
-    # Collision Helper
+    # Inside update_physics -> check_col function:
+    
     def check_col(tx, tz):
         radius = 5
         for cx in [tx-radius, tx+radius]:
@@ -878,7 +1008,12 @@ def update_physics():
                  if 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM:
                      cell = map_data[gx][gz]
                      if cell == C_WALL: return True
+                     
+                     # GATE LOGIC:
+                     # If ghosts < 3: Solid Wall.
+                     # If ghosts >= 3: Walkable (Pass through)
                      if cell == C_GATE and ghosts_captured < 3: return True
+                     
         return False
 
     if not check_col(player_pos[0] + final_dx, player_pos[2]):
@@ -892,136 +1027,134 @@ def update_physics():
     if map_data[gx_curr][gz_curr] == C_ACID and immunity_timer <= 0:
             player_hp -= 0.05
 
-    # --- Poison Ghosts AI ---
+    # --- Poison Ghosts AI (Smart Slide + Corner Escape) ---
+    p_dx = math.sin(player_angle)
+    p_dz = -math.cos(player_angle)
+
     for g in poison_ghosts:
         # 1. Handle Stun
         if g.get('stun_timer', 0) > 0:
             g['stun_timer'] -= 1
             continue
 
-        dx = player_pos[0] - g['x']
-        dz = player_pos[2] - g['z']
+        # 2. State Logic
+        dx = g['x'] - player_pos[0]
+        dz = g['z'] - player_pos[2]
         dist = math.sqrt(dx*dx + dz*dz)
         
-        # 2. State Logic
-        SIGHT_RANGE = 250 
+        dot = (p_dx * (dx/dist if dist>0 else 0)) + (p_dz * (dz/dist if dist>0 else 0))
         
-        if 'state' not in g: g['state'] = 'ROAM'
-        if 'speed' not in g: g['speed'] = 3.0
-
-        if dist < SIGHT_RANGE:
+        # Check Vision & Distance
+        if dist < 400 and dot < -0.5: # In front of player
              g['state'] = 'FLEE'
-        elif dist > 1000: 
+        elif dist > 1000:
              g['state'] = 'ROAM'
-             
-        move_x = 0; move_y = 0
         
-        if g['state'] == 'ROAM':
-             # Random movement logic
-             if random.random() < 0.05: 
-                 g['dx'] = random.uniform(-1, 1)
-                 g['dz'] = random.uniform(-1, 1)
-                 
-             # Normalize
-             length = math.sqrt(g.get('dx', 0)**2 + g.get('dz', 0)**2)
-             if length > 0:
-                 move_x = (g['dx'] / length) * (g['speed'] * 0.5) 
-                 move_y = (g['dz'] / length) * (g['speed'] * 0.5)
-                 
-             # Tether to player
-             if dist > 800:
-                  move_x += (dx / dist) * 0.5
-                  move_y += (dz / dist) * 0.5
-                  
-             # Wall Collision for Roaming
-             next_x = g['x'] + move_x
-             next_z = g['z'] + move_y
-             gx = int(next_x // CELL_SIZE); gz = int(next_z // CELL_SIZE)
-             if 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM and map_data[gx][gz] != C_WALL:
-                  g['x'] = next_x
-                  g['z'] = next_z
-             else:
-                  # Bounce
-                  g['dx'] = -g.get('dx', 0)
-                  g['dz'] = -g.get('dz', 0)
+        # Default State if undefined
+        if 'state' not in g: g['state'] = 'ROAM'
 
-        elif g['state'] == 'FLEE':
-            # Vector AWAY from player
+        move_x = 0; move_y = 0
+        speed = base_speed * 1.3 # Slightly faster than base to be threatening
+
+        if g['state'] == 'FLEE':
             if dist > 0:
-                dir_x = -(dx / dist)
-                dir_z = -(dz / dist)
-                
-                move_x = dir_x * g['speed']
-                move_y = dir_z * g['speed']
-                
-                next_x = g['x'] + move_x
-                next_z = g['z'] + move_y
-                
-                # Check for Wall
-                gx = int(next_x // CELL_SIZE)
-                gz = int(next_z // CELL_SIZE)
-                
-                hit_wall = False
-                if 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM:
-                    if map_data[gx][gz] == C_WALL:
-                        hit_wall = True
-                
-                if hit_wall:
-                    g['speed'] *= (2.0/3.0)
-                    
-                    # Look ahead to find the first open space
-                    # We continue along the vector until we hit non-wall
-                    found_open = False
-                    check_dist = CELL_SIZE # Start 1 cell away
-                    
-                    # Normalize direction
-                    mag = math.sqrt(dir_x**2 + dir_z**2)
-                    norm_x = dir_x / mag if mag > 0 else 0
-                    norm_z = dir_z / mag if mag > 0 else 0
-                    
-                    for i in range(1, 10): # Check up to 10 cells ahead
-                        check_x = g['x'] + norm_x * (i * CELL_SIZE)
-                        check_z = g['z'] + norm_z * (i * CELL_SIZE)
-                        
-                        cgx = int(check_x // CELL_SIZE)
-                        cgz = int(check_z // CELL_SIZE)
-                        
-                        if 0 <= cgx < MAP_DIM and 0 <= cgz < MAP_DIM:
-                            if map_data[cgx][cgz] != C_WALL and not in_boss_arena([check_x, 0, check_z], padding=20):
-                                # Found open space! Teleport there
-                                g['x'] = check_x
-                                g['z'] = check_z
-                                found_open = True
-                                break
-                    
-                    if not found_open:
-                        # Fallback: Just move to next pos (might be in wall, but we tried)
-                        g['x'] = next_x
-                        g['z'] = next_z
-                else:
-                    g['x'] = next_x
-                    g['z'] = next_z
+                # Vector AWAY from player
+                move_x = (dx / dist) * speed
+                move_y = (dz / dist) * speed
+        else:
+            # Roam
+            if random.random() < 0.05: 
+                g['rx'] = random.uniform(-1, 1)
+                g['ry'] = random.uniform(-1, 1)
+            move_x = g.get('rx', 0) * (speed * 0.4)
+            move_y = g.get('ry', 0) * (speed * 0.4)
 
-        # Boss Arena Exclusion
-        if in_boss_arena([g['x'], 0, g['z']], padding=20):
-             g['x'] -= move_x * 2
-             g['z'] -= move_y * 2
+        # --- PHYSICS & SLIDING ---
+        # Proposed new positions
+        next_x = g['x'] + move_x
+        next_z = g['z'] + move_y
+        
+        # Grid Coordinates
+        curr_gx = int(g['x'] // CELL_SIZE)
+        curr_gz = int(g['z'] // CELL_SIZE)
+        next_gx = int(next_x // CELL_SIZE)
+        next_gz = int(next_z // CELL_SIZE)
+        
+        can_move_x = True
+        can_move_z = True
+
+        # Check X-Axis Wall
+        if 0 <= next_gx < MAP_DIM and 0 <= curr_gz < MAP_DIM:
+            if map_data[next_gx][curr_gz] == C_WALL or in_boss_arena([next_x, 0, g['z']], padding=20):
+                can_move_x = False
+
+        # Check Z-Axis Wall
+        if 0 <= curr_gx < MAP_DIM and 0 <= next_gz < MAP_DIM:
+            if map_data[curr_gx][next_gz] == C_WALL or in_boss_arena([g['x'], 0, next_z], padding=20):
+                can_move_z = False
+
+        # Apply Movement
+        if can_move_x: 
+            g['x'] = next_x
+        
+        if can_move_z: 
+            g['z'] = next_z
+
+        # --- CORNER ESCAPE MECHANIC ---
+        # If stuck on BOTH axes (Cornered) and trying to move
+        if not can_move_x and not can_move_z and (abs(move_x) > 0.1 or abs(move_y) > 0.1):
+            # Force move towards the center of the current cell to unstuck
+            # Then pick a random perpendicular direction to slide out
+            center_x = (curr_gx * CELL_SIZE) + (CELL_SIZE / 2)
+            center_z = (curr_gz * CELL_SIZE) + (CELL_SIZE / 2)
             
+            # Nudge towards center
+            g['x'] += (center_x - g['x']) * 0.2
+            g['z'] += (center_z - g['z']) * 0.2
+            
+            # Jitter slightly to find a new sliding angle next frame
+            g['x'] += random.uniform(-1, 1)
+            g['z'] += random.uniform(-1, 1)
+            
+        # Hard Map Bounds
         g['x'] = max(CELL_SIZE, min(g['x'], (MAP_DIM-1)*CELL_SIZE))
         g['z'] = max(CELL_SIZE, min(g['z'], (MAP_DIM-1)*CELL_SIZE))
 
-    # Gas
+    # Gas Logic
     active_gas = []
     for g in gas_clouds:
         g['x'] += g['dx']; g['z'] += g['dz']
+        
         if g.get('type') == 'BOSS':
              g['life'] -= 1
+             
+             # REASON 3 FIX: Bounce off Arena Walls
+             # Define Arena Bounds
+             arena_min_x = (MAP_DIM - 35) * CELL_SIZE + CELL_SIZE
+             arena_max_x = (MAP_DIM - 5) * CELL_SIZE - CELL_SIZE
+             arena_min_z = (MAP_DIM - 35) * CELL_SIZE + CELL_SIZE
+             arena_max_z = (MAP_DIM - 5) * CELL_SIZE - CELL_SIZE
+             
+             # Bounce X
+             if g['x'] < arena_min_x or g['x'] > arena_max_x:
+                 g['dx'] *= -1
+                 g['x'] += g['dx'] * 2 # Push back in
+                 
+             # Bounce Z
+             if g['z'] < arena_min_z or g['z'] > arena_max_z:
+                 g['dz'] *= -1
+                 g['z'] += g['dz'] * 2
+                 
              if g['life'] <= 0: continue
         else:
+             # Normal Gas Logic
              if math.sqrt((g['x']-g['home_x'])**2 + (g['z']-g['home_z'])**2) > 50: g['dx']*=-1; g['dz']*=-1
         
-        if math.sqrt((player_pos[0]-g['x'])**2 + (player_pos[2]-g['z'])**2) < 20 and immunity_timer <= 0: player_hp -= 0.3
-        else: active_gas.append(g)
+        # Player Collision
+        if math.sqrt((player_pos[0]-g['x'])**2 + (player_pos[2]-g['z'])**2) < 20 and immunity_timer <= 0: 
+            player_hp -= 0.3
+        else: 
+            active_gas.append(g)
     gas_clouds = active_gas
 
     # Enemies
@@ -1029,8 +1162,21 @@ def update_physics():
     for e in enemies:
         dist = math.sqrt((player_pos[0]-e['x'])**2 + (player_pos[2]-e['z'])**2)
         if dist < 15: player_hp -= 0.5; continue
-        if dist < 200:
-             if math.sqrt((e['x']-e['home_x'])**2 + (e['z']-e['home_z'])**2) < 300:
+        
+        in_arena = in_boss_arena([e['x'], 0, e['z']], 0)
+        
+        should_chase = False
+        if in_arena:
+            should_chase = True
+        elif dist < 200:
+            should_chase = True
+            
+        if should_chase:
+             chase_allowed = True
+             if not in_arena:
+                 if math.sqrt((e['x']-e['home_x'])**2 + (e['z']-e['home_z'])**2) >= 300: chase_allowed = False
+             
+             if chase_allowed and dist > 0:
                  ex = (player_pos[0]-e['x'])/dist; ez = (player_pos[2]-e['z'])/dist
                  e['x'] += ex * enemy_speed; e['z'] += ez * enemy_speed
         new_enemies.append(e)
@@ -1066,29 +1212,46 @@ def update_physics():
         
         if not hit:
             if boss_active:
-                if math.sqrt((d['x']-boss_obj['x'])**2 + (d['z']-boss_obj['z'])**2) < 20:
+                # Check Boss Collision
+                if math.sqrt((d['x']-boss_obj['x'])**2 + (d['z']-boss_obj['z'])**2) < 25:
                     hit = True
                     boss_obj['hp'] -= 50
-                    for _ in range(10): particles.append({'x': boss_obj['x'], 'y': 20, 'z': boss_obj['z'], 'life': 20, 'dx': random.uniform(-2,2), 'dy': random.uniform(-2,2), 'dz': random.uniform(-2,2)})
+                    boss_obj['teleport_cd'] = max(0, boss_obj['teleport_cd'] - 50)
+                    
+                    # ... (Keep existing evasion/teleport logic here) ...
+                    # ... (Particles code here) ...
+
+                    # REASON 1 FIX: Loot only on death
                     if boss_obj['hp'] <= 0:
-                        boss_active = False; boss_defeated = True; rain_active = False
-                        loot.append({'x': boss_obj['x'], 'z': boss_obj['z'], 'type': 'DIAMOND_KEY'})
+                        boss_active = False
+                        boss_defeated = True
+                        rain_active = False
+                        # ONLY DROP GEM ON DEATH
+                        loot.append({'x': boss_obj['x'], 'z': boss_obj['z'], 'type': 'POISON_GEM'}) 
                         max_stamina = 120; player_stamina = 120
                         max_player_hp = 120; player_hp = 120
 
+            # Check Minion (Enemy) Collision
             remaining = []
             for e in enemies:
                 if math.sqrt((d['x']-e['x'])**2 + (d['z']-e['z'])**2) < 20:
                     hit = True
+                    # Particles
                     for _ in range(8): particles.append({'x': e['x'], 'y': 10, 'z': e['z'], 'life': 20, 'dx': random.uniform(-1,1), 'dy': random.uniform(0,2), 'dz': random.uniform(-1,1)})
+                    
+                    # Normal Loot Drops (Keep this)
                     r = random.random()
-                    # Loot Drops: Increased AMMO/STAMINA, Reduced BOTTLE
-                    if r < 0.1: loot.append({'x': e['x'], 'z': e['z'], 'type': 'BOTTLE'}) # Reduced from 0.4
-                    elif r < 0.3: loot.append({'x': e['x'], 'z': e['z'], 'type': 'HP'})
-                    elif r < 0.8: loot.append({'x': e['x'], 'z': e['z'], 'type': 'AMMO'}) # Increased range
-                    elif r < 0.95: loot.append({'x': e['x'], 'z': e['z'], 'type': 'IMMUNITY'})
-                    elif r < 0.99: loot.append({'x': e['x'], 'z': e['z'], 'type': 'STAMINA'})
-                else: remaining.append(e)
+                    if r < 0.5: loot.append({'x': e['x'], 'z': e['z'], 'type': 'BOTTLE'})
+                    elif r < 0.55: loot.append({'x': e['x'], 'z': e['z'], 'type': 'HP'})
+                    elif r < 0.8: loot.append({'x': e['x'], 'z': e['z'], 'type': 'AMMO'})
+                    
+                    # REASON 2 FIX: Instant Respawn if Boss Active
+                    if boss_active:
+                        # Spawn 2-3 new slimes at Boss location
+                        for _ in range(random.randint(2, 3)):
+                             enemies.append({'x': boss_obj['x'], 'z': boss_obj['z'], 'home_x': boss_obj['x'], 'home_z': boss_obj['z']})
+                else:
+                    remaining.append(e)
             enemies = remaining
         
         # Check Ghost Hit (Stun Effect)
@@ -1097,10 +1260,8 @@ def update_physics():
                  dist = math.sqrt((d['x']-g['x'])**2 + (d['z']-g['z'])**2)
                  if dist < 25:
                      hit = True
-                     g['stun_timer'] = 300 # Stun for 5 seconds
-                     # Sparkle Effect
-                     for _ in range(8): 
-                         particles.append({'x': g['x'], 'y': 60, 'z': g['z'], 'life': 20, 'dx': random.uniform(-2,2), 'dy': random.uniform(-2,2), 'dz': random.uniform(-2,2)})
+                     g['stun_timer'] = 180 # 3 Seconds Stun
+                     for _ in range(5): particles.append({'x': g['x'], 'y': 60, 'z': g['z'], 'life': 20, 'dx': random.uniform(-2,2), 'dy': random.uniform(-2,2), 'dz': random.uniform(-2,2)})
                      print("GHOST STUNNED! CATCH IT NOW!")
                      break
 
@@ -1134,7 +1295,7 @@ def update_physics():
             elif l['type'] == 'STAMINA': inventory.append("Stamina Pill")
             elif l['type'] == 'BOTTLE': inventory.append("Capture Bottle")
             elif l['type'] == 'GEM': has_green_gem = True; inventory.append("Green Gem")
-            elif l['type'] == 'DIAMOND_KEY': inventory.append("Diamond Key")
+            elif l['type'] == 'POISON_GEM': inventory.append("Poison Gem Stone")
         else: kept_loot.append(l)
     loot = kept_loot
 
@@ -1159,6 +1320,18 @@ def showScreen():
     draw_entities()
     if map_visible: draw_minimap() 
     draw_hud()
+    
+    # [Requirement] Draw Exit Gate when Boss Defeated
+    if boss_defeated:
+        ex_x = (MAP_DIM - 25) * CELL_SIZE
+        ex_z = (MAP_DIM - 35) * CELL_SIZE
+        glPushMatrix()
+        glTranslatef(ex_x, 0, ex_z)
+        glColor3f(0, 0, 1) # Blue Gate
+        glScalef(1, 3, 1)
+        glutSolidCube(30)
+        glPopMatrix()
+        
     glutSwapBuffers()
 
 def idle(): update_physics(); glutPostRedisplay()
@@ -1173,11 +1346,12 @@ def keyDown(key, x, y):
     if key == b'4':
          if "Capture Bottle" in inventory and ghosts_captured < 3:
              captured = False
+
              for g in poison_ghosts:
                  dist = math.sqrt((g['x']-player_pos[0])**2 + (g['z']-player_pos[2])**2)
                  
-                 # SIMPLIFIED: Just check distance. No aiming required.
-                 if dist < 60:
+                 # Logic: Must be Stunned AND Close
+                 if g.get('stun_timer', 0) > 0 and dist < 80:
                      inventory.remove("Capture Bottle")
                      poison_ghosts.remove(g)
                      ghosts_captured += 1
@@ -1186,7 +1360,7 @@ def keyDown(key, x, y):
                      break
              
              if not captured:
-                 print("Too far away!")
+                 print("Missed! Stun first or get closer.")
          else:
              print("No Bottles or Already Full!")
         
