@@ -1173,7 +1173,6 @@ def keyDown(key, x, y):
     if key == b'4':
          if "Capture Bottle" in inventory and ghosts_captured < 3:
              captured = False
-             
              for g in poison_ghosts:
                  dist = math.sqrt((g['x']-player_pos[0])**2 + (g['z']-player_pos[2])**2)
                  
