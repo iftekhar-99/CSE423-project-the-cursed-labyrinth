@@ -4,6 +4,10 @@ from OpenGL.GLU import *
 from OpenGL.GLUT import GLUT_BITMAP_HELVETICA_18
 import math
 import random
+import sys
+
+# Increase recursion depth for map gen
+sys.setrecursionlimit(2000)
 
 # ==========================================
 # Global Configuration (Level 3: Stone Labyrinth)
@@ -11,57 +15,65 @@ import random
 WINDOW_WIDTH = 1024
 WINDOW_HEIGHT = 768
 
-# Scale Factors
-MAP_DIM = 100        
+# Scale Factors (Matched to Level 1)
+MAP_DIM = 140        
 CELL_SIZE = 30       
 WALL_HEIGHT = 70    
 
 # Cell Types
 C_EMPTY = 0
 C_WALL = 1
-C_MINE_ZONE = 2      
+C_BOSS_ARENA = 3
 C_START = 4
 C_EXIT = 5
-C_BOSS_ARENA = 6
 
 # Map Data
 map_data = []       
 display_list = None 
 
 # --- ENTITY LISTS ---
-mines = []          # Landmines
+mines = []          # Landmines (Preserved)
 particles = [] 
-animals = []        # Rabbits (Natural spawns)
-animal_rocks = []   # Projectiles thrown by rabbits
+animals = []        # Rabbits (Preserved)
+animal_rocks = []   # Projectiles (From Rabbits)
 daggers = []        # Player projectiles
-loot = []           # Dropped items
-boulders = []       # Boss Boulders
-boss_minions = []   # NEW: Purple Enemies spawned by Boss
+loot = []           # HP Balls, Ammo, and SHIELDS
+boulders = []       # Boss Rain & Gas Cloud Rain
+boss_minions = []   # Purple Enemies 
+gas_clouds = []     # Green Spheres (Now drop boulders)
 
 # --- BOSS STATE (The Tank Golem) ---
 boss_active = False
 boss_defeated = False
 boss_obj = {
     'x': 0, 'z': 0, 
-    'hp': 300, 'max_hp': 300, 
+    'hp': 800,          # High HP
+    'max_hp': 800, 
     'timer': 0
 }
 
 # --- PLAYER STATE ---
 player_pos = [0, 0, 0]
-player_angle = 1.57 
-base_speed = 3.0
+player_angle = 1.57   # Left/Right
+player_pitch = 0.0    # Up/Down
+base_speed = 3.5
 player_speed = base_speed
-player_ammo = 10
+player_ammo = 40
 key_states = {}
 
-# --- FEATURES FROM LEVEL 1 ---
+# Stats
 player_stamina = 100.0
 max_stamina = 100.0
 is_exhausted = False
 is_sprinting = False
+shield_timer = 0      # Existing Shield Timer
 
-# Stats
+# --- NEW FEATURES FROM LEVEL 1 ---
+inventory = []
+immunity_timer = 0
+infinite_stamina_timer = 0
+# Map toggle removed (Map is now always visible)
+
 player_hp = 100.0
 game_over = False
 level_complete = False 
@@ -71,9 +83,10 @@ global_time = 0.0
 # 1. Map & Entity Generation
 # ==========================================
 def generate_level_3():
-    global map_data, player_pos, display_list, mines, particles, animals, animal_rocks, daggers, loot, boulders, boss_minions
+    global map_data, player_pos, display_list, mines, particles, animals, animal_rocks, daggers, loot, boulders, boss_minions, gas_clouds
     global game_over, level_complete, player_hp, player_ammo, boss_active, boss_defeated, boss_obj
-    global player_stamina, is_exhausted
+    global player_stamina, is_exhausted, player_pitch, shield_timer
+    global inventory, immunity_timer, infinite_stamina_timer
     
     # Reset State
     map_data = [[C_WALL for _ in range(MAP_DIM)] for _ in range(MAP_DIM)]
@@ -84,7 +97,9 @@ def generate_level_3():
     daggers = []
     loot = []
     boulders = []
-    boss_minions = [] # Reset minions
+    boss_minions = [] 
+    gas_clouds = []
+    
     game_over = False
     level_complete = False
     boss_active = False
@@ -93,73 +108,118 @@ def generate_level_3():
     player_ammo = 50 
     player_stamina = 100.0
     is_exhausted = False
+    player_pitch = 0.0
+    shield_timer = 0 
     
-    start_x, start_y = 5, 5
-    boss_x, boss_y = MAP_DIM - 15, MAP_DIM - 15
+    # Reset Level 1 Features
+    inventory = []
+    immunity_timer = 0
+    infinite_stamina_timer = 0
     
-    # --- 1. DIG MAZE (EASY/WIDE) ---
-    diggers = []
-    diggers.append({'x': start_x, 'y': start_y, 'target': (boss_x, boss_y), 'life': 800})
-    for _ in range(15):
-        diggers.append({'x': random.randint(5, MAP_DIM-5), 'y': random.randint(5, MAP_DIM-5), 'life': random.randint(200, 400)})
+    # --- HELPER FUNCTIONS ---
+    def create_rect(r_x, r_y, r_w, r_h, type=C_EMPTY):
+        for i in range(r_w):
+            for j in range(r_h):
+                if 0 <= r_x + i < MAP_DIM and 0 <= r_y + j < MAP_DIM:
+                    map_data[r_x + i][r_y + j] = type
 
-    for digger in diggers:
-        cx, cy = digger['x'], digger['y']
-        life = digger['life']
-        target = digger.get('target')
+    def check_overlap(x, y, w, h, existing_rooms, buffer=2):
+        for r in existing_rooms:
+            if (x - buffer < r['x'] + r['w'] and x + w + buffer > r['x'] and
+                y - buffer < r['y'] + r['h'] and y + h + buffer > r['y']):
+                return True
+        return False
+
+    def h_tunnel(x1, x2, z):
+        for x in range(min(x1, x2), max(x1, x2) + 1):
+            for w in range(3): 
+                if 0 < z+w < MAP_DIM-1: map_data[x][z+w] = C_EMPTY
+
+    def v_tunnel(z1, z2, x):
+        for z in range(min(z1, z2), max(z1, z2) + 1):
+            for w in range(3): 
+                if 0 < x+w < MAP_DIM-1: map_data[x+w][z] = C_EMPTY
+
+    # A. Critical Rooms
+    rooms = [] 
+    # Start Room
+    start_room = {'x': 5, 'y': 5, 'w': 10, 'h': 10}
+    create_rect(5, 5, 10, 10, C_START)
+    start_room['center'] = (10, 10)
+    rooms.append(start_room)
+    
+    # Boss Arena
+    boss_room = {'x': MAP_DIM - 35, 'y': MAP_DIM - 35, 'w': 30, 'h': 30}
+    create_rect(boss_room['x'], boss_room['y'], 30, 30, C_BOSS_ARENA)
+    boss_room['center'] = (boss_room['x'] + 15, boss_room['y'] + 15)
+    
+    # B. Random Rooms
+    attempts = 0
+    while len(rooms) < 25 and attempts < 1000: 
+        attempts += 1
+        shape_type = random.choice([0, 0, 1, 2]) 
+        x = random.randint(10, MAP_DIM - 30); y = random.randint(10, MAP_DIM - 30)
         
-        while life > 0:
-            move_x, move_y = 0, 0
-            if target and random.random() < 0.35: 
-                dx = target[0] - cx; dy = target[1] - cy
-                if abs(dx) > abs(dy): move_x = 1 if dx > 0 else -1
-                else: move_y = 1 if dy > 0 else -1
-            else:
-                move_x, move_y = random.choice([(0,1), (0,-1), (1,0), (-1,0)])
+        if shape_type == 0: 
+            w = random.randint(6, 12); h = random.randint(6, 12)
+            if not check_overlap(x, y, w, h, rooms):
+                create_rect(x, y, w, h); rooms.append({'x':x, 'y':y, 'w':w, 'h':h, 'center':(x+w//2, y+h//2)})
+        elif shape_type == 1: 
+            w1 = random.randint(6, 10); h1 = random.randint(6, 10); w2 = random.randint(6, 10); h2 = random.randint(6, 10) 
+            if random.random() < 0.5: x2, y2 = x + w1 - 2, y 
+            else: x2, y2 = x, y + h1 - 2 
+            if not check_overlap(x, y, w1+w2, h1+h2, rooms):
+                create_rect(x, y, w1, h1); create_rect(x2, y2, w2, h2); rooms.append({'x':x, 'y':y, 'w':w1+w2, 'h':h1+h2, 'center':(x+w1//2, y+h1//2)})
+        elif shape_type == 2:
+            if not check_overlap(x, y, 16, 16, rooms):
+                create_rect(x + 4, y, 6, 16); create_rect(x, y + 5, 16, 6); rooms.append({'x':x, 'y':y, 'w':16, 'h':16, 'center':(x+8, y+8)})
 
-            cx += move_x; cy += move_y
-            cx = max(2, min(MAP_DIM-3, cx)); cy = max(2, min(MAP_DIM-3, cy))
+    rooms.append(boss_room)
 
-            # Carve 3x3 for easy navigation
-            for i in range(-1, 2):
-                for j in range(-1, 2):
-                    if 0 < cx+i < MAP_DIM-1 and 0 < cy+j < MAP_DIM-1:
-                        map_data[cx+i][cy+j] = C_EMPTY
+    # Connect Rooms
+    boss_room['center'] = (MAP_DIM - 35, MAP_DIM - 20) 
+    for i in range(len(rooms) - 1):
+        r1 = rooms[i]; r2 = rooms[i+1]; x1, y1 = r1['center']; x2, y2 = r2['center']
+        if random.random() < 0.5: h_tunnel(x1, x2, y1); v_tunnel(y1, y2, x2)
+        else: v_tunnel(y1, y2, x1); h_tunnel(x1, x2, y2)
 
-            # Spawn Logic (Center tile only)
-            if map_data[cx][cy] == C_EMPTY:
-                if random.random() < 0.05: 
-                    if abs(cx - start_x) > 5 or abs(cy - start_y) > 5:
-                        mines.append({'x': cx * CELL_SIZE, 'y': 0, 'z': cy * CELL_SIZE, 'state': 'IDLE', 'timer': 180, 'blink': 0})
+    # C. Populate Entities
+    for x in range(MAP_DIM):
+        for z in range(MAP_DIM):
+            if map_data[x][z] == C_EMPTY:
+                wx = x * CELL_SIZE; wz = z * CELL_SIZE
+                r = random.random()
+                
+                # Mines (Preserved)
+                if r < 0.015: 
+                    mines.append({'x': wx, 'y': 0, 'z': wz, 'state': 'IDLE', 'timer': 180})
+                # Purple Enemies (Preserved)
+                elif r < 0.040: 
+                    boss_minions.append({'x': wx, 'z': wz, 'home_x': wx, 'home_z': wz})
+                # Rabbits (Preserved)
+                elif r < 0.060: 
+                    animals.append({'x': wx, 'z': wz, 'y': 0, 'cooldown': 0, 'angle': 0.0, 'hp': 1})
+                # Gas Clouds (Green Spheres)
+                elif r < 0.075:
+                    gas_clouds.append({'x': wx, 'z': wz, 'y_base': 40, 'timer': 0})
+                # Loot (Updated with chance for Level 1 Items)
+                elif r < 0.10:
+                    rr = random.random()
+                    if rr < 0.4: l_type = 'HP'
+                    elif rr < 0.8: l_type = 'AMMO'
+                    elif rr < 0.9: l_type = 'SHIELD' 
+                    elif rr < 0.95: l_type = 'STAMINA' # New
+                    else: l_type = 'IMMUNITY' # New
+                    loot.append({'x': wx, 'z': wz, 'type': l_type})
 
-                if random.random() < 0.01: # Reduced rabbits
-                    if abs(cx - start_x) > 5 or abs(cy - start_y) > 5:
-                        animals.append({'x': cx * CELL_SIZE, 'z': cy * CELL_SIZE, 'y': 0, 'cooldown': 0, 'angle': 0.0, 'hp': 1})
-            life -= 1
+    # Setup Boss & Exit
+    boss_obj['x'] = (boss_room['x'] + 15) * CELL_SIZE
+    boss_obj['z'] = (boss_room['y'] + 15) * CELL_SIZE
+    boss_obj['hp'] = 800
+    map_data[boss_room['x'] + 15][boss_room['y'] + 5] = C_EXIT
+    player_pos = [start_room['center'][0] * CELL_SIZE, 20, start_room['center'][1] * CELL_SIZE]
 
-    # --- 2. BOSS ARENA ---
-    for i in range(boss_x - 10, boss_x + 10):
-        for j in range(boss_y - 10, boss_y + 10):
-             if 0 < i < MAP_DIM and 0 < j < MAP_DIM:
-                 map_data[i][j] = C_BOSS_ARENA
-
-    boss_obj['x'] = boss_x * CELL_SIZE
-    boss_obj['z'] = boss_y * CELL_SIZE
-    boss_obj['hp'] = 300 
-
-    # --- 3. START ZONE ---
-    for i in range(start_x - 1, start_x + 2):
-        for j in range(start_y - 1, start_y + 2):
-            map_data[i][j] = C_START
-            mines = [m for m in mines if abs(m['x'] - i*CELL_SIZE) > 50 or abs(m['z'] - j*CELL_SIZE) > 50]
-            animals = [a for a in animals if abs(a['x'] - i*CELL_SIZE) > 50 or abs(a['z'] - j*CELL_SIZE) > 50]
-
-    player_pos = [start_x * CELL_SIZE, 20, start_y * CELL_SIZE]
-    map_data[boss_x + 8][boss_y] = C_EXIT
-
-    if display_list:
-        glDeleteLists(display_list, 1)
-        display_list = None
+    if display_list: glDeleteLists(display_list, 1); display_list = None
 
 # ==========================================
 # 2. Visuals
@@ -172,8 +232,7 @@ def create_display_list():
     for x in range(MAP_DIM):
         for z in range(MAP_DIM):
             cell = map_data[x][z]
-            wx = x * CELL_SIZE
-            wz = z * CELL_SIZE
+            wx = x * CELL_SIZE; wz = z * CELL_SIZE
             
             if cell == C_WALL:
                 glPushMatrix()
@@ -184,14 +243,14 @@ def create_display_list():
                 glutSolidCube(CELL_SIZE)
                 glPopMatrix()
             elif cell == C_EMPTY or cell == C_START:
-                if (x+z)%2 == 0: glColor3f(0.35, 0.25, 0.15) 
-                else: glColor3f(0.30, 0.20, 0.10) 
+                if (x+z)%2 == 0: glColor3f(0.2, 0.15, 0.1) 
+                else: glColor3f(0.25, 0.2, 0.15) 
                 glBegin(GL_QUADS)
                 glVertex3f(wx-CELL_SIZE/2, 0, wz-CELL_SIZE/2); glVertex3f(wx+CELL_SIZE/2, 0, wz-CELL_SIZE/2)
                 glVertex3f(wx+CELL_SIZE/2, 0, wz+CELL_SIZE/2); glVertex3f(wx-CELL_SIZE/2, 0, wz+CELL_SIZE/2)
                 glEnd()
             elif cell == C_BOSS_ARENA:
-                glColor3f(0.15, 0.15, 0.15) 
+                glColor3f(0.1, 0.1, 0.1) 
                 glBegin(GL_QUADS)
                 glVertex3f(wx-CELL_SIZE/2, 0, wz-CELL_SIZE/2); glVertex3f(wx+CELL_SIZE/2, 0, wz-CELL_SIZE/2)
                 glVertex3f(wx+CELL_SIZE/2, 0, wz+CELL_SIZE/2); glVertex3f(wx-CELL_SIZE/2, 0, wz+CELL_SIZE/2)
@@ -206,7 +265,10 @@ def create_display_list():
     glEndList()
 
 def draw_entities():
-    # 1. LANDMINES
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+    # LANDMINES
     for m in mines:
         if m['state'] == 'EXPLODED': continue
         glPushMatrix()
@@ -220,16 +282,18 @@ def draw_entities():
             glScalef(1.2, 0.4, 1.2); glutSolidSphere(10, 8, 8)
         glPopMatrix()
 
-    # 2. PARTICLES
+    # PARTICLES
     for p in particles:
         glPushMatrix()
         glTranslatef(p['x'], p['y'], p['z'])
         glScalef(p['life']/10.0, p['life']/10.0, p['life']/10.0)
-        glColor3f(1, 0.6 if random.random()>0.5 else 0, 0)
+        # Blue particles if shield was hit, Red/Orange for others
+        if p.get('type') == 'SHIELD': glColor3f(0.0, 0.5, 1.0)
+        else: glColor3f(1, 0.6 if random.random()>0.5 else 0, 0)
         glutSolidCube(3)
         glPopMatrix()
 
-    # 3. ANIMALS (RABBITS) - White
+    # RABBITS
     for a in animals:
         glPushMatrix()
         glTranslatef(a['x'], 3, a['z'])
@@ -246,17 +310,26 @@ def draw_entities():
                 glPushMatrix(); glTranslatef(lx, -2, lz); glRotatef(90, 1, 0, 0); glutSolidCone(0.5, 2, 4, 4); glPopMatrix() 
         glPopMatrix()
 
-    # 4. BOSS MINIONS (PURPLE ONES FROM LEVEL 1)
-    glColor3f(0.6, 0.0, 0.8) # Purple
+    # PURPLE SPHERES
+    glColor3f(0.6, 0.0, 0.8) 
     for e in boss_minions:
         glPushMatrix()
-        s = 1.0 + 0.1 * math.sin(global_time * 2) # Pulsate
+        s = 1.0 + 0.1 * math.sin(global_time * 2)
         glTranslatef(e['x'], 5, e['z'])
         glScalef(s * 1.2, s * 0.4, s * 1.2)
         glutSolidSphere(10, 10, 10)
         glPopMatrix()
+        
+    # GAS CLOUDS
+    glColor4f(0.6, 0.8, 0.6, 0.4) 
+    for g in gas_clouds:
+        glPushMatrix()
+        y_float = g['y_base'] + math.sin(global_time) * 5
+        glTranslatef(g['x'], y_float, g['z'])
+        glutSolidSphere(12, 10, 10)
+        glPopMatrix()
 
-    # 5. ROCKS
+    # ROCKS
     glColor3f(0.4, 0.2, 0.1) 
     for r in animal_rocks:
         glPushMatrix()
@@ -264,42 +337,67 @@ def draw_entities():
         glutSolidSphere(3, 6, 6)
         glPopMatrix()
 
-    # 6. DAGGERS
+    # DAGGERS
     glColor3f(0.0, 1.0, 1.0) 
     for d in daggers:
         glPushMatrix()
         glTranslatef(d['x'], d['y'], d['z'])
         glRotatef(math.degrees(-d['angle']), 0, 1, 0)
+        glRotatef(math.degrees(d.get('pitch', 0)), 1, 0, 0)
         glScalef(0.5, 0.5, 2.0); glutSolidSphere(2, 6, 6) 
         glPopMatrix()
 
-    # 7. LOOT
-    glColor3f(1.0, 0.0, 0.0) 
+    # LOOT
     for l in loot:
         glPushMatrix()
         glTranslatef(l['x'], 5 + math.sin(global_time*5)*2, l['z'])
-        glutSolidSphere(4, 8, 8)
+        
+        if l.get('type') == 'HP':
+            # RED BALL (Health)
+            glColor3f(1.0, 0.0, 0.0) 
+            glutSolidSphere(4, 8, 8)
+        elif l.get('type') == 'AMMO':
+            # CYAN DAGGER BUNDLE (Ammo)
+            glColor3f(0.0, 1.0, 1.0)
+            glScalef(0.5, 0.5, 2.0)
+            glutSolidSphere(3, 6, 6)
+        elif l.get('type') == 'SHIELD':
+            # BLUE SPHERE (Shield)
+            glColor3f(0.0, 0.0, 1.0)
+            glutSolidSphere(4, 8, 8)
+        elif l.get('type') == 'STAMINA':
+            # Cyan Cube
+            glColor3f(0.0, 1.0, 0.8)
+            glScalef(0.5, 2, 0.5)
+            glutSolidCube(5)
+        elif l.get('type') == 'IMMUNITY':
+            # Purple Torus
+            glColor3f(0.8, 0, 1)
+            glutSolidTorus(1, 2, 8, 8)
+            
         glPopMatrix()
 
-    # 8. BOSS
+    # BOSS
     if boss_active and not boss_defeated:
         glPushMatrix()
         glTranslatef(boss_obj['x'], 30, boss_obj['z']) 
         glScalef(4, 4, 4) 
-        glColor3f(0.4, 0.3, 0.2); glutSolidCube(10)
-        glTranslatef(0, 8, 0); glColor3f(0.5, 0.4, 0.3); glutSolidSphere(4, 10, 10)
-        glColor3f(1, 0, 0)
+        glColor3f(0.4, 0.3, 0.2); glutSolidCube(10) # Body
+        glTranslatef(0, 8, 0); glColor3f(0.5, 0.4, 0.3); glutSolidSphere(4, 10, 10) # Head
+        glColor3f(1, 0, 0) # Eyes
         glTranslatef(-2, 0, 3); glutSolidSphere(1, 5, 5)
         glTranslatef(4, 0, 0); glutSolidSphere(1, 5, 5)
         glPopMatrix()
 
-    # 9. BOULDERS
+    # BOULDERS (Rain)
     glColor3f(0.3, 0.3, 0.3) 
     for b in boulders:
         glPushMatrix()
         glTranslatef(b['x'], b['y'], b['z'])
         glutSolidSphere(15, 10, 10) 
         glPopMatrix()
+        
+    glDisable(GL_BLEND)
 
 def draw_minimap():
     glDisable(GL_DEPTH_TEST) 
@@ -360,25 +458,49 @@ def draw_hud():
 
     glColor3f(1, 1, 1)
     glRasterPos2f(20, WINDOW_HEIGHT - 30)
-    msg = f"HP: {int(player_hp)} | DAGGERS: {player_ammo}"
+    msg = f"HP: {int(player_hp)} | AMMO: {player_ammo}"
     for ch in msg: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
     
+    # SHIELD & IMMUNITY STATUS
+    status_y = WINDOW_HEIGHT - 90
+    if shield_timer > 0:
+        glColor3f(0, 0.5, 1)
+        glRasterPos2f(20, status_y)
+        s_msg = f"SHIELD ACTIVE: {int(shield_timer/60)}s"
+        for ch in s_msg: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+        status_y -= 30
+
+    if immunity_timer > 0:
+        glColor3f(0, 1, 0)
+        glRasterPos2f(20, status_y)
+        msg = f"IMMUNITY: {int(immunity_timer/60)}s"
+        for ch in msg: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+        status_y -= 30
+
     # STAMINA
     bar_x = 20; bar_y = WINDOW_HEIGHT - 60; bar_w = 100
     glColor3f(0.3, 0.3, 0.3)
     glBegin(GL_QUADS); glVertex2f(bar_x, bar_y); glVertex2f(bar_x + bar_w, bar_y); glVertex2f(bar_x + bar_w, bar_y + 10); glVertex2f(bar_x, bar_y + 10); glEnd()
     
-    if is_exhausted: glColor3f(1, 0, 0) 
+    if infinite_stamina_timer > 0: glColor3f(0, 1, 1)
+    elif is_exhausted: glColor3f(1, 0, 0) 
     else: glColor3f(1, 1, 0) 
     fill_w = (player_stamina / max_stamina) * bar_w
     glBegin(GL_QUADS); glVertex2f(bar_x, bar_y); glVertex2f(bar_x + fill_w, bar_y); glVertex2f(bar_x + fill_w, bar_y + 10); glVertex2f(bar_x, bar_y + 10); glEnd()
     glColor3f(1, 1, 1); glRasterPos2f(bar_x + 110, bar_y); 
-    for ch in "STM": glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+    
+    st_msg = "INF STM" if infinite_stamina_timer > 0 else "STM"
+    for ch in st_msg: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+
+    # INVENTORY DISPLAY
+    bag_content = ", ".join([str(item) for item in inventory])
+    glRasterPos2f(20, status_y)
+    for ch in f"Bag: {bag_content}": glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
 
     if boss_active and not boss_defeated:
         glColor3f(1, 0.2, 0.2)
         glRasterPos2f(WINDOW_WIDTH/2 - 50, WINDOW_HEIGHT - 50)
-        b_msg = f"TANK GOLEM: {boss_obj['hp']}"
+        b_msg = f"GOLEM: {boss_obj['hp']}/{boss_obj['max_hp']}"
         for ch in b_msg: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
 
     if game_over:
@@ -410,33 +532,54 @@ def check_sprint():
 
 def update_physics():
     global player_pos, player_angle, global_time, player_hp, game_over, level_complete, player_ammo
-    global mines, particles, animals, animal_rocks, daggers, loot, boulders, boss_minions
+    global mines, particles, animals, animal_rocks, daggers, loot, boulders, boss_minions, gas_clouds
     global boss_active, boss_obj, boss_defeated, player_speed, player_stamina, is_exhausted, is_sprinting
+    global player_pitch, shield_timer, immunity_timer, infinite_stamina_timer, inventory
     
     if game_over or level_complete: return
 
     global_time += 0.05
+    if shield_timer > 0: shield_timer -= 1
+    if immunity_timer > 0: immunity_timer -= 1
+    if infinite_stamina_timer > 0: infinite_stamina_timer -= 1
     
-    # --- MOVEMENT ---
-    is_moving = key_states.get(b'w') or key_states.get(b's') or key_states.get(b'a') or key_states.get(b'd')
-    if is_sprinting and is_moving and not is_exhausted:
-        player_speed = base_speed * 2.0; player_stamina -= 0.5 
-        if player_stamina <= 0: player_stamina = 0; is_exhausted = True
-    elif is_exhausted:
-        player_speed = base_speed * 0.5; player_stamina += 0.1
-        if player_stamina >= 30: is_exhausted = False
-    else:
-        player_speed = base_speed
-        if not is_sprinting: player_stamina = min(100, player_stamina + 0.2)
-
-    move_speed = 0; strafe = 0
+    # --- MOVEMENT (Strict Stop Logic) ---
+    move_speed = 0
+    strafe = 0
+    
+    # Only assign speed if key is actively held.
+    # This ensures that if keys are not pressed (or keyUp has triggered), 
+    # speed remains 0, preventing "automated running".
     if key_states.get(b'w'): move_speed = player_speed
     if key_states.get(b's'): move_speed = -player_speed
     if key_states.get(b'a'): strafe = -player_speed
     if key_states.get(b'd'): strafe = player_speed
     
+    # Sprint Logic
+    is_moving = (move_speed != 0) or (strafe != 0)
+    
+    if infinite_stamina_timer > 0:
+        player_speed = base_speed * 2.0 if is_sprinting else base_speed
+        player_stamina = 100; is_exhausted = False
+    else:
+        if is_sprinting and is_moving and not is_exhausted:
+            player_speed = base_speed * 2.0; player_stamina -= 0.5 
+            if player_stamina <= 0: player_stamina = 0; is_exhausted = True
+        elif is_exhausted:
+            player_speed = base_speed * 0.5; player_stamina += 0.1
+            if player_stamina >= 30: is_exhausted = False
+        else:
+            player_speed = base_speed
+            if not is_sprinting: player_stamina = min(100, player_stamina + 0.2)
+
+    # LOOKING (Arrows)
     if key_states.get(GLUT_KEY_LEFT): player_angle -= 0.04
     if key_states.get(GLUT_KEY_RIGHT): player_angle += 0.04
+    if key_states.get(GLUT_KEY_UP): player_pitch += 0.04
+    if key_states.get(GLUT_KEY_DOWN): player_pitch -= 0.04
+    
+    # Clamp Pitch (-85 to +85 degrees approx)
+    player_pitch = max(-1.5, min(1.5, player_pitch))
     
     dx = math.sin(player_angle) * move_speed
     dz = -math.cos(player_angle) * move_speed
@@ -446,19 +589,29 @@ def update_physics():
     nx = player_pos[0] + dx + sdx
     nz = player_pos[2] + dz + sdz
     
-    gx = int(round(nx / CELL_SIZE))
-    gz = int(round(nz / CELL_SIZE))
-    
-    if 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM:
-        if map_data[gx][gz] != C_WALL:
-            player_pos[0] = nx; player_pos[2] = nz
-            
-            if map_data[gx][gz] == C_BOSS_ARENA and not boss_active and not boss_defeated:
-                boss_active = True; print("TANK GOLEM AWAKENS!")
+    # Collision Logic
+    def check_col(tx, tz):
+        radius = 5
+        for cx in [tx-radius, tx+radius]:
+            for cz in [tz-radius, tz+radius]:
+                 gx = int(cx // CELL_SIZE)
+                 gz = int(cz // CELL_SIZE)
+                 if 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM:
+                     cell = map_data[gx][gz]
+                     if cell == C_WALL: return True
+        return False
 
-            if map_data[gx][gz] == C_EXIT:
-                if boss_defeated: level_complete = True
-                else: player_pos[0] -= dx * 2; player_pos[2] -= dz * 2
+    if not check_col(nx, player_pos[2]): player_pos[0] = nx
+    if not check_col(player_pos[0], nz): player_pos[2] = nz
+    
+    # Current Tile Checks
+    gx = int(player_pos[0] // CELL_SIZE)
+    gz = int(player_pos[2] // CELL_SIZE)
+    
+    if map_data[gx][gz] == C_BOSS_ARENA and not boss_active and not boss_defeated:
+        boss_active = True; print("TANK GOLEM AWAKENS!")
+    if map_data[gx][gz] == C_EXIT and boss_defeated:
+        level_complete = True
 
     # --- LANDMINES ---
     active_mines = []
@@ -471,11 +624,23 @@ def update_physics():
             if m['timer'] <= 0:
                 m['state'] = 'EXPLODED'
                 for _ in range(30): particles.append({'x': m['x'], 'y': 5, 'z': m['z'], 'dx': random.uniform(-3,3), 'dy': random.uniform(1,5), 'dz': random.uniform(-3,3), 'life': 40})
-                if d_player < 40: player_hp -= 50
+                if d_player < 40 and immunity_timer <= 0: player_hp -= 50
         active_mines.append(m)
     mines = active_mines
     
-    # --- RABBITS (Flee) ---
+    # --- GAS CLOUDS (Drop Boulders) ---
+    for g in gas_clouds:
+        d = dist(player_pos, (g['x'], 0, g['z']))
+        if d < 400: # If player is in range
+            g['timer'] += 1
+            if g['timer'] > 400: # Wait approx 6-7 seconds then rain
+                # DROP BOULDER RAIN (High Y)
+                drop_x = player_pos[0] + random.randint(-40, 40)
+                drop_z = player_pos[2] + random.randint(-40, 40)
+                boulders.append({'x': drop_x, 'y': 250, 'z': drop_z, 'vy': 0})
+                g['timer'] = 0
+
+    # --- RABBITS (Flee & Throw) ---
     for a in animals:
         dx_p = a['x'] - player_pos[0]; dz_p = a['z'] - player_pos[2]
         dist_p = math.sqrt(dx_p**2 + dz_p**2)
@@ -489,15 +654,10 @@ def update_physics():
             if 0 <= agx < MAP_DIM and 0 <= agz < MAP_DIM and map_data[agx][agz] != C_WALL:
                 a['x'] = nx; a['z'] = nz; a['angle'] = math.atan2(dir_z, dir_x)
             else:
-                agx_only = int(round(nx / CELL_SIZE)); agz_old = int(round(a['z'] / CELL_SIZE))
-                if 0 <= agx_only < MAP_DIM and map_data[agx_only][agz_old] != C_WALL:
-                    a['x'] = nx; a['angle'] = math.atan2(0, dir_x)
-                else:
-                    agx_old = int(round(a['x'] / CELL_SIZE)); agz_only = int(round(nz / CELL_SIZE))
-                    if 0 <= agz_only < MAP_DIM and map_data[agx_old][agz_only] != C_WALL:
-                        a['z'] = nz; a['angle'] = math.atan2(dir_z, 0)
+                if 0 <= agx < MAP_DIM and map_data[agx][int(a['z']//CELL_SIZE)] != C_WALL: a['x'] = nx
+                elif 0 <= agz < MAP_DIM and map_data[int(a['x']//CELL_SIZE)][agz] != C_WALL: a['z'] = nz
 
-        if dist_p < 200:
+        if dist_p < 250:
             if a['cooldown'] > 0: a['cooldown'] -= 1
             else:
                 rock_speed = 3.5 
@@ -505,73 +665,124 @@ def update_physics():
                 animal_rocks.append({'x': a['x'], 'y': 5, 'z': a['z'], 'vx': vx, 'vz': vz, 'life': 100})
                 a['cooldown'] = 120 
 
-    # --- BOSS MINIONS (Chase) ---
+    # --- PURPLE ENEMIES (Chase) ---
+    enemy_speed = base_speed / 8.0 
     for m in boss_minions:
         dx = player_pos[0] - m['x']; dz = player_pos[2] - m['z']
         dst = math.sqrt(dx*dx + dz*dz)
-        if dst < 15: player_hp -= 0.5
-        elif dst < 300:
-            m['x'] += (dx/dst) * (base_speed * 0.8)
-            m['z'] += (dz/dst) * (base_speed * 0.8)
+        if dst < 15 and immunity_timer <= 0: player_hp -= 0.5
+        elif dst < 400:
+             m['x'] += (dx/dst) * enemy_speed
+             m['z'] += (dz/dst) * enemy_speed
 
-    # --- BOSS ---
+    # --- BOSS LOGIC (Tank Golem) ---
     if boss_active:
         boss_obj['timer'] += 1
         bx, bz = boss_obj['x'], boss_obj['z']
+        
         v_to_p_x = player_pos[0] - bx; v_to_p_z = player_pos[2] - bz
         d_to_p = math.sqrt(v_to_p_x**2 + v_to_p_z**2)
-        if d_to_p > 10:
+
+        # 1. SMACK ATTACK (Proximity)
+        if d_to_p < 30:
+            if immunity_timer <= 0: player_hp -= 1.0 # Rapid damage
+            # Knockback
+            player_pos[0] += (v_to_p_x / d_to_p) * 10
+            player_pos[2] += (v_to_p_z / d_to_p) * 10
+            
+        # 2. MOVE (Slowly)
+        if d_to_p > 25:
             boss_obj['x'] += (v_to_p_x / d_to_p) * (base_speed * 0.15) 
             boss_obj['z'] += (v_to_p_z / d_to_p) * (base_speed * 0.15)
-        if boss_obj['timer'] % 120 == 0:
-            boulders.append({'x': player_pos[0], 'y': 200, 'z': player_pos[2], 'vy': 0})
-        if boss_obj['timer'] % 300 == 0:
-            # Spawn PURPLE MINIONS instead of rabbits
-            boss_minions.append({'x': boss_obj['x'] + random.randint(-50, 50), 'z': boss_obj['z'] + random.randint(-50, 50)})
 
-    # --- BOULDERS ---
+        # 3. ATTACK: BOULDER RAIN (Constant)
+        if boss_obj['timer'] % 60 == 0:
+            boulders.append({'x': player_pos[0], 'y': 250, 'z': player_pos[2], 'vy': 0})
+            
+        # 4. ABILITY: SPAWN MINIONS
+        if boss_obj['timer'] % 400 == 0:
+            boss_minions.append({'x': boss_obj['x'] + random.randint(-50,50), 'z': boss_obj['z'] + random.randint(-50,50)})
+            
+        # 5. ABILITY: SELF HEAL
+        if boss_obj['timer'] % 300 == 0:
+            if boss_obj['hp'] < boss_obj['max_hp']:
+                boss_obj['hp'] += 20
+                for _ in range(5): particles.append({'x': bx, 'y': 30, 'z': bz, 'dx': 0, 'dy': 2, 'dz': 0, 'life': 20})
+
+    # --- BOULDERS (Physics & Shielding) ---
     active_boulders = []
     for b in boulders:
         b['vy'] += 0.5; b['y'] -= b['vy']
         if b['y'] <= 0:
+            # Impact particles
             for _ in range(10): particles.append({'x': b['x'], 'y': 2, 'z': b['z'], 'dx': random.uniform(-2,2), 'dy': random.uniform(2,6), 'dz': random.uniform(-2,2), 'life': 20})
-            if dist(player_pos, (b['x'], 0, b['z'])) < 30: player_hp = 0; game_over = True
+            
+            # Hit Check
+            if dist(player_pos, (b['x'], 0, b['z'])) < 30: 
+                if shield_timer > 0:
+                     # Shield blocked it! Blue particles
+                     for _ in range(20): particles.append({'x': player_pos[0], 'y': 10, 'z': player_pos[2], 'dx': random.uniform(-4,4), 'dy': random.uniform(2,8), 'dz': random.uniform(-4,4), 'life': 30, 'type': 'SHIELD'})
+                elif immunity_timer > 0:
+                     pass # Immune
+                else:
+                     player_hp = 0; game_over = True
         else: active_boulders.append(b)
     boulders = active_boulders
 
     # --- DAGGERS ---
     active_daggers = []
     for d in daggers:
-        d['x'] += math.sin(d['angle']) * 8.0; d['z'] -= math.cos(d['angle']) * 8.0; d['life'] -= 1
+        # 3D Movement with Pitch
+        d['x'] += math.sin(d['angle']) * math.cos(d.get('pitch', 0)) * 8.0
+        d['y'] += math.sin(d.get('pitch', 0)) * 8.0
+        d['z'] -= math.cos(d['angle']) * math.cos(d.get('pitch', 0)) * 8.0
+        d['life'] -= 1
+        
         hit = False
         dgx = int(round(d['x'] / CELL_SIZE)); dgz = int(round(d['z'] / CELL_SIZE))
-        if map_data[dgx][dgz] == C_WALL: hit = True
+        if 0 <= dgx < MAP_DIM and 0 <= dgz < MAP_DIM and map_data[dgx][dgz] == C_WALL: hit = True
+        if d['y'] < 0: hit = True
 
         if boss_active and not hit:
             d_boss = dist((d['x'], 0, d['z']), (boss_obj['x'], 0, boss_obj['z']))
-            if d_boss < 40:
+            if d_boss < 50: # Massive Hitbox
                 hit = True; boss_obj['hp'] -= 15
                 for _ in range(5): particles.append({'x': d['x'], 'y': 20, 'z': d['z'], 'dx': random.uniform(-2,2), 'dy': random.uniform(-2,2), 'dz': random.uniform(-2,2), 'life': 10})
                 if boss_obj['hp'] <= 0: boss_active = False; boss_defeated = True; boulders = []; boss_minions = []
 
-        # Check Rabbits
+        # Hit Rabbits -> Drop random loot
         if not hit:
             active_animals = []
             for a in animals:
                 if dist((d['x'], 0, d['z']), (a['x'], 0, a['z'])) < 15:
                     hit = True
                     for _ in range(10): particles.append({'x': a['x'], 'y': 5, 'z': a['z'], 'dx': random.uniform(-2,2), 'dy': random.uniform(1,5), 'dz': random.uniform(-2,2), 'life': 20})
-                    loot.append({'x': a['x'], 'z': a['z']})
+                    
+                    rr = random.random()
+                    if rr < 0.4: l_type = 'HP'
+                    elif rr < 0.8: l_type = 'AMMO'
+                    elif rr < 0.9: l_type = 'SHIELD'
+                    elif rr < 0.95: l_type = 'STAMINA'
+                    else: l_type = 'IMMUNITY'
+                    loot.append({'x': a['x'], 'z': a['z'], 'type': l_type})
                 else: active_animals.append(a)
             animals = active_animals
 
-        # Check Minions
+        # Hit Minions -> Drop random loot
         if not hit:
             active_minions = []
             for m in boss_minions:
                 if dist((d['x'], 0, d['z']), (m['x'], 0, m['z'])) < 15:
                     hit = True
                     for _ in range(10): particles.append({'x': m['x'], 'y': 5, 'z': m['z'], 'dx': random.uniform(-2,2), 'dy': random.uniform(1,5), 'dz': random.uniform(-2,2), 'life': 20})
+                    
+                    rr = random.random()
+                    if rr < 0.4: l_type = 'HP'
+                    elif rr < 0.8: l_type = 'AMMO'
+                    elif rr < 0.9: l_type = 'SHIELD'
+                    elif rr < 0.95: l_type = 'STAMINA'
+                    else: l_type = 'IMMUNITY'
+                    loot.append({'x': m['x'], 'z': m['z'], 'type': l_type})
                 else: active_minions.append(m)
             boss_minions = active_minions
             
@@ -581,7 +792,18 @@ def update_physics():
     # --- LOOT & ROCKS ---
     active_loot = []
     for l in loot:
-        if dist(player_pos, (l['x'], 0, l['z'])) < 15: player_ammo += 5
+        if dist(player_pos, (l['x'], 0, l['z'])) < 15: 
+            if l.get('type') == 'HP':
+                if player_hp >= 100: inventory.append("HP Pill") # Inventory logic
+                else: player_hp = min(100, player_hp + 20)
+            elif l.get('type') == 'AMMO':
+                player_ammo += 5
+            elif l.get('type') == 'SHIELD':
+                shield_timer = 600 
+            elif l.get('type') == 'STAMINA':
+                inventory.append("Stamina Pill")
+            elif l.get('type') == 'IMMUNITY':
+                inventory.append("Immunity")
         else: active_loot.append(l)
     loot = active_loot
 
@@ -589,11 +811,11 @@ def update_physics():
     for r in animal_rocks:
         r['x'] += r['vx']; r['z'] += r['vz']; r['life'] -= 1
         if dist(player_pos, (r['x'], 0, r['z'])) < 10:
-            player_hp -= 5
+            if immunity_timer <= 0: player_hp -= 5
             for _ in range(5): particles.append({'x': r['x'], 'y': 5, 'z': r['z'], 'dx': random.uniform(-1,1), 'dy': random.uniform(1,3), 'dz': random.uniform(-1,1), 'life': 15})
             continue 
         rgx = int(round(r['x'] / CELL_SIZE)); rgz = int(round(r['z'] / CELL_SIZE))
-        if map_data[rgx][rgz] != C_WALL and r['life'] > 0: active_rocks.append(r)
+        if 0 <= rgx < MAP_DIM and 0 <= rgz < MAP_DIM and map_data[rgx][rgz] != C_WALL and r['life'] > 0: active_rocks.append(r)
     animal_rocks = active_rocks
 
     if player_hp <= 0: game_over = True
@@ -608,18 +830,38 @@ def setup_camera():
     glMatrixMode(GL_PROJECTION); glLoadIdentity()
     gluPerspective(60, WINDOW_WIDTH/WINDOW_HEIGHT, 1, 1000)
     glMatrixMode(GL_MODELVIEW); glLoadIdentity()
-    lx = player_pos[0] + math.sin(player_angle) * 100
-    lz = player_pos[2] - math.cos(player_angle) * 100
-    gluLookAt(player_pos[0], 25, player_pos[2], lx, 35, lz, 0, 1, 0)
+    
+    # Calculate Look Vector with Pitch
+    lx = math.sin(player_angle) * math.cos(player_pitch)
+    ly = math.sin(player_pitch)
+    lz = -math.cos(player_angle) * math.cos(player_pitch)
+    
+    gluLookAt(player_pos[0], 25, player_pos[2], 
+              player_pos[0] + lx, 25 + ly, player_pos[2] + lz, 
+              0, 1, 0)
 
 # ==========================================
 # Input Callbacks
 # ==========================================
 def keyDown(key, x, y):
+    global immunity_timer, player_hp, infinite_stamina_timer, inventory
     check_sprint()
     key_states[key] = True
     key_states[key.lower()] = True 
     if key == b'r': generate_level_3()
+    
+    # Level 1 Features
+    # Note: 'c' toggle for map removed as requested (map is now always on)
+    
+    if key == b'1' and "Immunity" in inventory: 
+        inventory.remove("Immunity")
+        immunity_timer = 360
+    if key == b'2' and "HP Pill" in inventory and player_hp < 100: 
+        inventory.remove("HP Pill")
+        player_hp = min(100, player_hp+20)
+    if key == b'3' and "Stamina Pill" in inventory: 
+        inventory.remove("Stamina Pill")
+        infinite_stamina_timer = 600
 
 def keyUp(key, x, y): 
     check_sprint()
@@ -641,7 +883,7 @@ def mouseListener(button, state, x, y):
             player_ammo -= 1
             daggers.append({
                 'x': player_pos[0], 'y': 20, 'z': player_pos[2],
-                'angle': player_angle, 'life': 50
+                'angle': player_angle, 'pitch': player_pitch, 'life': 60
             })
         else: print("Out of Ammo!")
 
@@ -651,7 +893,7 @@ def showScreen():
     if display_list is None: create_display_list()
     glCallList(display_list)
     draw_entities()
-    draw_minimap() 
+    draw_minimap() # Minimap is always visible now
     draw_hud()
     glutSwapBuffers()
 
@@ -659,12 +901,19 @@ def idle():
     update_physics()
     glutPostRedisplay()
 
+def init_fog():
+    # Adjusted fog color to match Stone level (Greyish)
+    glEnable(GL_FOG); glFogfv(GL_FOG_COLOR, (0.1, 0.1, 0.1, 1.0))
+    glFogi(GL_FOG_MODE, GL_LINEAR); glFogf(GL_FOG_START, 100.0); glFogf(GL_FOG_END, 800.0)
+    glClearColor(0.1, 0.1, 0.1, 1.0)
+
 def main():
     glutInit()
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
     glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT)
-    glutCreateWindow(b"Level 3: The Tank Golem")
+    glutCreateWindow(b"Level 3: The Final Stand")
     glEnable(GL_DEPTH_TEST)
+    init_fog() # New Feature
     generate_level_3()
     glutDisplayFunc(showScreen)
     glutIdleFunc(idle)
