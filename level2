@@ -12,66 +12,70 @@ WINDOW_WIDTH = 1024
 WINDOW_HEIGHT = 768
 
 # Scale Factors
-MAP_DIM = 100        
-CELL_SIZE = 20      
-WALL_HEIGHT = 50    
+MAP_DIM = 100
+CELL_SIZE = 20
+WALL_HEIGHT = 50
 
 # Cell Types
 C_EMPTY = 0
 C_WALL = 1
-C_SPIKE = 2          
-C_PISTON = 3        # NEW: Crushing trap
+C_SPIKE = 2
+C_PISTON = 3    
 C_BOSS_ARENA = 4
 C_EXIT = 5
 
 # Map Data
-map_data = []       
-display_list = None 
+map_data = []
+display_list = None
 
 # --- ENTITY LISTS ---
-birds = []           
-sphere_heads = []    
-projectiles = []     
-player_daggers = []  
+birds = []
+projectiles = []
+player_daggers = []
 loot = []
-particles = [] 
-pistons = []         # List to track piston timing
+particles = []
+pistons = []    
 
 # --- BOSS STATE ---
-boss_obj = {'x': 0, 'z': 0, 'hp': 3000, 'active': False, 'dead': False}
+boss_obj = {
+    'x': 0, 'z': 0, 
+    'hp': 5000,          # Increased HP for better fight
+    'active': False, 
+    'dead': False, 
+    'shoot_timer': 0     # NEW: Timer for boss attacks
+}
 
 # --- PLAYER STATE ---
 player_pos = [0, 0, 0]
-player_angle = 1.57 
-base_speed = 2.2 
+player_angle = 1.57
+base_speed = 2.2
 player_speed = base_speed
 key_states = {}
 
 # Stats
 player_hp = 100.0
-player_ammo = 15     
-player_stamina = 100.0 # NEW: For Boosting
-emp_cooldown = 0       # NEW: For EMP Blast
-immunity_timer = 0   
+player_ammo = 15
+player_stamina = 100.0  
+emp_cooldown = 0        
+immunity_timer = 0
 
 # Logic Timers
 global_time = 0.0
 spike_cooldown = 0
 game_over = False
-level_complete = False 
+level_complete = False
 
 # ==========================================
 # 1. Map & Entity Generation
 # ==========================================
 def generate_level_2():
-    global map_data, player_pos, display_list, birds, sphere_heads, boss_obj, pistons
+    global map_data, player_pos, display_list, birds, boss_obj, pistons
     global projectiles, player_daggers, loot, particles, player_hp, player_ammo
     global player_stamina, emp_cooldown, immunity_timer
-    
+
     # Reset Logic
     map_data = [[C_WALL for _ in range(MAP_DIM)] for _ in range(MAP_DIM)]
     birds = []
-    sphere_heads = []
     projectiles = []
     player_daggers = []
     loot = []
@@ -83,102 +87,92 @@ def generate_level_2():
     player_stamina = 100
     emp_cooldown = 0
     immunity_timer = 0
-    
+
     start_x, start_y = 5, 5
     boss_x, boss_y = MAP_DIM - 10, MAP_DIM - 10
-    
-    # --- A. MAZE GENERATION (WIDER & GUARANTEED PATH) ---
-    # We will use a Prim's algorithm or similar, but to keep it organic/burrowed:
-    # 1. Fill map with Walls (Done above)
-    # 2. Use a "Drunkard's Walk" with bias towards the Boss to ensure connectivity
-    
-    diggers = [{'x': start_x, 'y': start_y, 'life': 2000, 'target_bias': 0.1}]
-    
-    # Guarantee a path from Start to Boss
-    cx, cy = start_x, start_y
-    while (abs(cx - boss_x) > 5 or abs(cy - boss_y) > 5):
-        # Carve 1x1 (Narrower, more complex path)
-        map_data[cx][cy] = C_EMPTY
-        
-        # Move towards boss
-        if random.random() < 0.3: # 30% chance to move directly towards boss
-             if cx < boss_x: cx += 1
-             elif cx > boss_x: cx -= 1
-             
-             if cy < boss_y: cy += 1
-             elif cy > boss_y: cy -= 1
-        else: # Random wander
-             move = random.choice([(0,1), (0,-1), (1,0), (-1,0)])
-             cx += move[0]; cy += move[1]
-             
-        cx = max(2, min(MAP_DIM-4, cx)); cy = max(2, min(MAP_DIM-4, cy))
 
-    # Add random diggers for complexity
-    for _ in range(40): 
-        diggers.append({'x': random.randint(5, MAP_DIM-5), 'y': random.randint(5, MAP_DIM-5), 'life': 400})
+    # --- A. MAZE GENERATION (Wide Paths) ---
+    
+    # 1. Force Clear Start Area
+    for i in range(start_x-2, start_x+3):
+        for j in range(start_y-2, start_y+3):
+             if 0 <= i < MAP_DIM and 0 <= j < MAP_DIM: map_data[i][j] = C_EMPTY
+
+    # 2. Main Highway to Boss
+    cx, cy = start_x, start_y
+    while (abs(cx - boss_x) > 1 or abs(cy - boss_y) > 1):
+        if 0 <= cx < MAP_DIM and 0 <= cy < MAP_DIM: map_data[cx][cy] = C_EMPTY
+        if 0 <= cx+1 < MAP_DIM and 0 <= cy < MAP_DIM: map_data[cx+1][cy] = C_EMPTY
+        if 0 <= cx < MAP_DIM and 0 <= cy+1 < MAP_DIM: map_data[cx][cy+1] = C_EMPTY
+
+        if random.random() < 0.5: 
+            if cx < boss_x: cx += 1
+            elif cx > boss_x: cx -= 1
+        else:
+            if cy < boss_y: cy += 1
+            elif cy > boss_y: cy -= 1
+
+    # 3. Random Diggers
+    diggers = []
+    for _ in range(30):
+        diggers.append({'x': random.randint(5, MAP_DIM-5), 'y': random.randint(5, MAP_DIM-5), 'life': 200})
 
     for digger in diggers:
         cx, cy = digger['x'], digger['y']
         life = digger['life']
         while life > 0:
-            # Carve 1x1 area (Narrower corridors)
             if 0 < cx < MAP_DIM-1 and 0 < cy < MAP_DIM-1:
-                 map_data[cx][cy] = C_EMPTY
+                map_data[cx][cy] = C_EMPTY
             
-            move = random.choice([(0,1), (0,-1), (1,0), (-1,0)])
+            move = random.choice([(0,1), (0,-1), (1,0), (-1,0)]) 
             cx += move[0]; cy += move[1]
-            cx = max(2, min(MAP_DIM-4, cx)); cy = max(2, min(MAP_DIM-4, cy))
-            
-            # Loop creation (extra carving)
-            if random.random() < 0.15:
-                if 0 < cx+move[0]*2 < MAP_DIM and 0 < cy+move[1]*2 < MAP_DIM:
-                    map_data[cx+move[0]*2][cy+move[1]*2] = C_EMPTY
+            cx = max(2, min(MAP_DIM-3, cx)); cy = max(2, min(MAP_DIM-3, cy))
             life -= 1
 
     # --- B. POPULATE OBSTACLES ---
     for x in range(MAP_DIM):
         for z in range(MAP_DIM):
             if map_data[x][z] == C_EMPTY:
-                # Safety Zone
                 dist = math.sqrt((x-start_x)**2 + (z-start_y)**2)
                 if dist < 15: continue
-                
+
                 wx = x * CELL_SIZE
                 wz = z * CELL_SIZE
                 r = random.random()
-                
-                # 1. PISTONS (New Obstacle) - Reduced to 0.5%
+
+                # 1. PISTONS (0.5%)
                 if r < 0.005:
                     map_data[x][z] = C_PISTON
                     pistons.append({
                         'x': wx, 'z': wz,
-                        'offset': random.uniform(0, 6.28), # Random start phase
+                        'offset': random.uniform(0, 6.28), 
                         'state': 'UP'
                     })
-                
-                # 2. SPIKES - Reduced to 2%
-                elif r < 0.025:
+                # 2. SPIKES (INCREASED to 7%)
+                elif r < 0.07:  # <--- MORE SPIKES!
                     map_data[x][z] = C_SPIKE
-                    
-                # 3. BIRDS - Increased to 4%
-                elif r < 0.085:
-                    birds.append({'x': wx, 'y': 35, 'z': wz, 'angle': 0, 'speed': 1.5})
-                    
-                # 4. REMOVED SPHERE HEADS (Yellow Balls)
+                # 3. SHOOTING BIRDS (5%)
+                elif r < 0.05:
+                    birds.append({
+                        'x': wx, 'y': 35, 'z': wz, 
+                        'angle': 0, 'speed': 1.5,
+                        'shoot_timer': random.randint(0, 100) # NEW: Reload timer
+                    })
 
     # --- C. BOSS & EXIT ---
     boss_obj['x'] = boss_x * CELL_SIZE
     boss_obj['z'] = boss_y * CELL_SIZE
-    boss_obj['hp'] = 3000
+    boss_obj['hp'] = 5000
     boss_obj['dead'] = False
-    
-    # Clear Boss Area
+    boss_obj['shoot_timer'] = 0
+
     for i in range(boss_x-8, boss_x+9):
         for j in range(boss_y-8, boss_y+9):
             if 0 <= i < MAP_DIM and 0 <= j < MAP_DIM:
                 map_data[i][j] = C_BOSS_ARENA
-                
-    map_data[boss_x][boss_y+8] = C_EXIT     
+
+    map_data[boss_x][boss_y+8] = C_EXIT
+
     player_pos = [start_x * CELL_SIZE, 20, start_y * CELL_SIZE]
 
     if display_list:
@@ -192,24 +186,23 @@ def create_display_list():
     global display_list
     display_list = glGenLists(1)
     glNewList(display_list, GL_COMPILE)
-    
+
     for x in range(MAP_DIM):
         for z in range(MAP_DIM):
             cell = map_data[x][z]
             wx = x * CELL_SIZE
             wz = z * CELL_SIZE
-            
+
             if cell == C_WALL:
                 glPushMatrix()
                 glTranslatef(wx, WALL_HEIGHT/2, wz)
                 glScalef(1, WALL_HEIGHT/CELL_SIZE, 1)
-                glColor3f(0.5, 0.2, 0.1); glutSolidCube(CELL_SIZE) # Rust Color
+                glColor3f(0.5, 0.2, 0.1); glutSolidCube(CELL_SIZE)
                 glColor3f(0.2, 0.1, 0.0); glutWireCube(CELL_SIZE)
                 glPopMatrix()
-                
+            
             elif cell in [C_EMPTY, C_SPIKE, C_PISTON, C_BOSS_ARENA]:
-                # Metallic Floor (Silver Ash)
-                if (x+z)%2 == 0: glColor3f(0.7, 0.7, 0.75) 
+                if (x+z)%2 == 0: glColor3f(0.7, 0.7, 0.75)
                 else: glColor3f(0.65, 0.65, 0.7)
                 glBegin(GL_QUADS)
                 glVertex3f(wx-10, 0, wz-10); glVertex3f(wx+10, 0, wz-10)
@@ -225,36 +218,21 @@ def create_display_list():
     glEndList()
 
 def draw_entities():
-    # 1. PISTONS (The Crusher)
+    # 1. PISTONS
     for p in pistons:
-        # Calculate Height based on Sine Wave
-        # Cycle: Slowly up, Fast down
         cycle = (global_time * 2 + p['offset'])
-        height_val = math.sin(cycle)
-        
-        # Mapping sine to physical height (0 to 40)
-        # We want it to hang from ceiling (y=60)
-        # If val is 1, it's UP (y=60). If val is -1, it's DOWN (y=10)
-        draw_y = 35 + (height_val * 25) 
-        
+        height_val = math.sin(cycle) 
+        draw_y = 35 + (height_val * 25)
+
         glPushMatrix()
         glTranslatef(p['x'], draw_y, p['z'])
-        
-        # The Piston Head
-        glColor3f(0.2, 0.2, 0.2) # Dark Steel
-        glScalef(1, 2, 1) # Tall block
-        glutSolidCube(18) # Slightly smaller than cell
-        
-        # The Shaft connecting to ceiling
-        glColor3f(0.1, 0.1, 0.1)
-        glTranslatef(0, 10, 0)
-        glScalef(0.2, 5, 0.2)
-        glutSolidCube(18)
+        glColor3f(0.2, 0.2, 0.2); glScalef(1, 2, 1); glutSolidCube(18)
+        glColor3f(0.1, 0.1, 0.1); glTranslatef(0, 10, 0); glScalef(0.2, 5, 0.2); glutSolidCube(18)
         glPopMatrix()
 
     # 2. SPIKES
     spike_h = abs(math.sin(global_time * 3)) * 15
-    glColor3f(0.4, 0.4, 0.4) 
+    glColor3f(0.4, 0.4, 0.4)
     for x in range(MAP_DIM):
         for z in range(MAP_DIM):
             if map_data[x][z] == C_SPIKE:
@@ -265,21 +243,20 @@ def draw_entities():
                 glutSolidCone(4, 15, 6, 2)
                 glPopMatrix()
 
-    # 3. BIRDS
+    # 3. SHOOTING BIRDS
     for b in birds:
         glPushMatrix()
         glTranslatef(b['x'], b['y'], b['z'])
         glRotatef(math.degrees(-b['angle']), 0, 1, 0)
+        
         flap = math.sin(global_time * 10) * 30
-        glColor3f(0.9, 0.9, 0.9)
-        glPushMatrix(); glScalef(1, 0.5, 2); glutSolidCube(4); glPopMatrix() # Body
-        # Wings
+        glColor3f(0.9, 0.2, 0.2) # Reddish aggressive birds
+        glPushMatrix(); glScalef(1, 0.5, 2); glutSolidCube(4); glPopMatrix()
         glPushMatrix(); glRotatef(flap, 0, 0, 1); glTranslatef(4, 0, 0); glScalef(3, 0.2, 1); glutSolidCube(3); glPopMatrix()
         glPushMatrix(); glRotatef(-flap, 0, 0, 1); glTranslatef(-4, 0, 0); glScalef(3, 0.2, 1); glutSolidCube(3); glPopMatrix()
         glPopMatrix()
 
-    # 4. ENEMIES (Removed Sphere Heads)
-    # 5. PROJECTILES
+    # 5. PROJECTILES (Orange balls)
     glColor3f(1.0, 0.5, 0.0)
     for p in projectiles:
         glPushMatrix()
@@ -302,27 +279,60 @@ def draw_entities():
         glTranslatef(l['x'], 10, l['z'])
         glRotatef(global_time * 50, 0, 1, 0)
         if l['type'] == 'AMMO': glColor3f(0.8, 0.8, 0.8); glutSolidCone(3, 8, 6, 6)
-        elif l['type'] == 'IMMUNITY': glColor3f(0.8, 0, 1); glutSolidTorus(2, 6, 8, 8)
         elif l['type'] == 'HP': glColor3f(1, 0, 0); glutSolidSphere(4, 8, 8)
         glPopMatrix()
 
-    # 8. BOSS
+    # --- 8. NEW BOSS MODEL (Square + Rounded Objects) ---
     if not boss_obj['dead']:
         glPushMatrix()
         glTranslatef(boss_obj['x'], 30, boss_obj['z'])
+        
+        # 1. Main Body (Large Red Cube)
+        glPushMatrix()
+        glColor3f(0.8, 0, 0)
         glScalef(2, 2, 2)
-        glColor3f(1, 0, 0); glutSolidCube(20)
-        # Rotating Shield
+        glutSolidCube(15)
+        glPopMatrix()
+
+        # 2. Core (Sphere inside)
+        glPushMatrix()
+        glColor3f(0.2, 0, 0) # Dark red core
+        glutSolidSphere(12, 10, 10)
+        glPopMatrix()
+
+        # 3. Head (Rounded Object on Top)
+        glPushMatrix()
+        glTranslatef(0, 20, 0)
+        glColor3f(1.0, 0.2, 0.2) # Bright red
+        glutSolidSphere(10, 15, 15)
+        # Eye (Cube inside sphere)
+        glTranslatef(0, 0, 8)
+        glColor3f(1, 1, 0) # Yellow Eye
+        glutSolidCube(6)
+        glPopMatrix()
+
+        # 4. Floating Rotating Shield (Square Objects)
+        glPushMatrix()
+        glRotatef(global_time * 60, 0, 1, 0) # Spin fast
         for i in range(4):
             glPushMatrix()
-            glRotatef(global_time * 40 + (i*90), 0, 1, 0)
-            glTranslatef(25, 0, 0)
-            glColor3f(0.4, 0.4, 0.4); glutSolidCube(8)
+            glRotatef(i * 90, 0, 1, 0)
+            glTranslatef(35, 0, 0) # Distance from body
+            
+            # Shield Element: Cube with Sphere ends
+            glColor3f(0.4, 0.4, 0.4)
+            glutSolidCube(8)
+            
+            glPushMatrix(); glTranslatef(0, 5, 0); glColor3f(1,0,0); glutSolidSphere(3,8,8); glPopMatrix()
+            glPushMatrix(); glTranslatef(0,-5, 0); glColor3f(1,0,0); glutSolidSphere(3,8,8); glPopMatrix()
+            
             glPopMatrix()
         glPopMatrix()
-        
-    # 9. EMP EFFECT (Visual ring)
-    if emp_cooldown > 480: # Showing effect for first 20 frames of cooldown (500 start)
+
+        glPopMatrix()
+
+    # 9. EMP EFFECT
+    if emp_cooldown > 480:
         scale = (500 - emp_cooldown) * 2
         glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE)
         glColor4f(0.5, 0.5, 1.0, 0.5)
@@ -341,34 +351,6 @@ def draw_entities():
         glColor3f(1, 1, 0); glutSolidCube(1)
         glPopMatrix()
 
-def draw_minimap():
-    glDisable(GL_DEPTH_TEST)
-    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
-    gluOrtho2D(0, WINDOW_WIDTH, 0, WINDOW_HEIGHT)
-    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
-    
-    # Minimap Background
-    ms = 150; mx = 20; my = 20
-    glColor3f(0, 0, 0); glRectf(mx, my, mx+ms, my+ms)
-    glColor3f(0.5, 0.5, 0.5); glLineWidth(2)
-    glBegin(GL_LINE_LOOP); glVertex2f(mx, my); glVertex2f(mx+ms, my); glVertex2f(mx+ms, my+ms); glVertex2f(mx, my+ms); glEnd()
-    
-    world_max = MAP_DIM * CELL_SIZE
-    # Player Dot
-    px = (player_pos[0]/world_max)*ms; pz = (player_pos[2]/world_max)*ms
-    glColor3f(0, 0.6, 1)
-    glPushMatrix(); glTranslatef(mx+px, my+pz, 0); glRectf(-3, -3, 3, 3); glPopMatrix()
-    
-    # Boss Dot
-    if not boss_obj['dead']:
-        bx = (boss_obj['x']/world_max)*ms; bz = (boss_obj['z']/world_max)*ms
-        glColor3f(1, 0, 0)
-        glPushMatrix(); glTranslatef(mx+bx, my+bz, 0); glRectf(-4, -4, 4, 4); glPopMatrix()
-
-    glMatrixMode(GL_PROJECTION); glPopMatrix()
-    glMatrixMode(GL_MODELVIEW); glPopMatrix()
-    glEnable(GL_DEPTH_TEST)
-
 def draw_hud():
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
     gluOrtho2D(0, WINDOW_WIDTH, 0, WINDOW_HEIGHT)
@@ -379,29 +361,30 @@ def draw_hud():
     glRasterPos2f(20, WINDOW_HEIGHT - 30)
     glutBitmapString(GLUT_BITMAP_HELVETICA_18, f"HP: {int(player_hp)} | AMMO: {player_ammo}".encode())
 
-    # Stamina Bar (Boost)
+    # Boss HP Bar (Only when close)
+    dist_to_boss = math.sqrt((player_pos[0]-boss_obj['x'])**2 + (player_pos[2]-boss_obj['z'])**2)
+    if dist_to_boss < 500 and not boss_obj['dead']:
+        glColor3f(0.5, 0, 0)
+        glRectf(WINDOW_WIDTH/2 - 200, WINDOW_HEIGHT - 60, WINDOW_WIDTH/2 + 200, WINDOW_HEIGHT - 40)
+        glColor3f(1, 0, 0)
+        width = (boss_obj['hp'] / 5000) * 400
+        glRectf(WINDOW_WIDTH/2 - 200, WINDOW_HEIGHT - 60, WINDOW_WIDTH/2 - 200 + width, WINDOW_HEIGHT - 40)
+        glRasterPos2f(WINDOW_WIDTH/2 - 40, WINDOW_HEIGHT - 55)
+        glutBitmapString(GLUT_BITMAP_HELVETICA_18, b"BOSS")
+
     glColor3f(0.2, 0.2, 0.2); glRectf(20, WINDOW_HEIGHT-50, 120, WINDOW_HEIGHT-40)
     glColor3f(0, 1, 1); glRectf(20, WINDOW_HEIGHT-50, 20 + player_stamina, WINDOW_HEIGHT-40)
     glRasterPos2f(130, WINDOW_HEIGHT - 48); glutBitmapString(GLUT_BITMAP_HELVETICA_18, b"BOOST [SPACE]")
 
-    # EMP Status
     if emp_cooldown <= 0:
-        glColor3f(1, 1, 0)
-        glRasterPos2f(20, WINDOW_HEIGHT - 70)
-        glutBitmapString(GLUT_BITMAP_HELVETICA_18, b"EMP READY [E]")
+        glColor3f(1, 1, 0); glRasterPos2f(20, WINDOW_HEIGHT - 70); glutBitmapString(GLUT_BITMAP_HELVETICA_18, b"EMP READY [E]")
     else:
-        glColor3f(0.5, 0.5, 0.5)
-        glRasterPos2f(20, WINDOW_HEIGHT - 70)
-        glutBitmapString(GLUT_BITMAP_HELVETICA_18, b"EMP RECHARGING...")
-        
-    if immunity_timer > 0:
-        glColor3f(1, 0, 1)
-        glRasterPos2f(20, WINDOW_HEIGHT - 90)
-        glutBitmapString(GLUT_BITMAP_HELVETICA_18, f"SHIELD: {int(immunity_timer/30)}s".encode())
+        glColor3f(0.5, 0.5, 0.5); glRasterPos2f(20, WINDOW_HEIGHT - 70); glutBitmapString(GLUT_BITMAP_HELVETICA_18, b"EMP RECHARGING...")
 
     if game_over:
         glColor3f(1, 0, 0); glRasterPos2f(WINDOW_WIDTH/2 - 40, WINDOW_HEIGHT/2)
         glutBitmapString(GLUT_BITMAP_HELVETICA_18, b"GAME OVER (Press R to Restart)")
+    
     if level_complete:
         glColor3f(0, 1, 0); glRasterPos2f(WINDOW_WIDTH/2 - 60, WINDOW_HEIGHT/2)
         glutBitmapString(GLUT_BITMAP_HELVETICA_18, b"LEVEL COMPLETE! (Press R to Restart)")
@@ -415,23 +398,29 @@ def draw_hud():
 # ==========================================
 def update_physics():
     global player_pos, player_angle, global_time, player_hp, player_ammo, player_stamina
-    global projectiles, sphere_heads, birds, player_daggers, loot, particles, pistons
+    global projectiles, birds, player_daggers, loot, particles, pistons, boss_obj
     global spike_cooldown, game_over, level_complete, emp_cooldown, immunity_timer
 
+    # 1. RESTART CHECK (First Priority)
+    if key_states.get(b'r'):
+        generate_level_2()
+        create_display_list() 
+        game_over = False
+        level_complete = False
+        return 
+
     if game_over or level_complete: return
-    
+
     global_time += 0.05
     if immunity_timer > 0: immunity_timer -= 1
     if emp_cooldown > 0: emp_cooldown -= 1
-    
-    # --- A. PLAYER INPUTS & MOVEMENT ---
-    # 1. BOOST MECHANIC (Spacebar)
+
+    # --- A. PLAYER MOVEMENT ---
     current_speed = base_speed
     if key_states.get(b' ') and player_stamina > 0:
-        current_speed = base_speed * 2.0
-        player_stamina -= 1.0 # Drain fuel
+        current_speed = base_speed * 2.0; player_stamina -= 1.0 
     else:
-        if player_stamina < 100: player_stamina += 0.3 # Recharge
+        if player_stamina < 100: player_stamina += 0.3 
 
     move_speed = 0; strafe = 0
     if key_states.get(b'w') or key_states.get(GLUT_KEY_UP): move_speed = current_speed
@@ -439,147 +428,173 @@ def update_physics():
     if key_states.get(b'a'): strafe = -current_speed
     if key_states.get(b'd'): strafe = current_speed
     
-    # Arrow Keys for Camera
     if key_states.get(GLUT_KEY_LEFT): player_angle -= 0.045
     if key_states.get(GLUT_KEY_RIGHT): player_angle += 0.045
-    
-    # EMP Trigger
-    if key_states.get(b'e') and emp_cooldown <= 0:
-        emp_cooldown = 500 # Long cooldown
-        # Logic: Clear projectiles nearby
-        projectiles = [] 
-        # Push enemies back (Removed sphere heads, but keep logic for structure)
-        # Visual Particles for EMP
-        for _ in range(30):
-            particles.append({
-                'x': player_pos[0], 'y': 20, 'z': player_pos[2],
-                'dx': random.uniform(-2,2), 'dy': random.uniform(-2,2), 'dz': random.uniform(-2,2),
-                'life': 40
-            })
-            
-    # RESTART GAME (R)
-    if key_states.get(b'r'):
-        generate_level_2()
-        create_display_list() # Rebuild visual list
-        game_over = False
-        level_complete = False
 
-    # Collision & Position Update
+    if key_states.get(b'e') and emp_cooldown <= 0:
+        emp_cooldown = 500
+        projectiles = [] 
+        for _ in range(30):
+            particles.append({'x': player_pos[0], 'y': 20, 'z': player_pos[2], 'dx': random.uniform(-2,2), 'dy': random.uniform(-2,2), 'dz': random.uniform(-2,2), 'life': 40})
+
     dx = math.sin(player_angle) * move_speed
     dz = -math.cos(player_angle) * move_speed
     sdx = math.sin(player_angle + 1.57) * strafe
     sdz = -math.cos(player_angle + 1.57) * strafe
-    
+
     nx = player_pos[0] + dx + sdx
     nz = player_pos[2] + dz + sdz
     gx = int(round(nx / CELL_SIZE)); gz = int(round(nz / CELL_SIZE))
-    
+
     if 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM:
         if map_data[gx][gz] != C_WALL:
             player_pos[0] = nx; player_pos[2] = nz
             if map_data[gx][gz] == C_EXIT and boss_obj['dead']: level_complete = True
 
-    # --- B. OBSTACLE LOGIC ---
-    gx = int(round(player_pos[0] / CELL_SIZE))
-    gz = int(round(player_pos[2] / CELL_SIZE))
+    # --- B. OBSTACLE & ENEMY ATTACKS ---
+    gx = int(round(player_pos[0] / CELL_SIZE)); gz = int(round(player_pos[2] / CELL_SIZE))
 
-    # 1. PISTONS (Crusher)
-    # Check if player is under a piston when it's DOWN
+    # Pistons
     for p in pistons:
-        # Calculate Piston Height same as draw function
         cycle = (global_time * 2 + p['offset'])
-        height_val = math.sin(cycle)
-        # Low point is approx -1 to -0.5 (DOWN)
-        if height_val < -0.6:
-            # Check collision
-            p_dist = math.sqrt((p['x']-player_pos[0])**2 + (p['z']-player_pos[2])**2)
-            if p_dist < 15 and immunity_timer <= 0:
-                player_hp -= 2.0 # Fast Damage (Crushing)
-    
-    # 2. SPIKES
-    if map_data[gx][gz] == C_SPIKE:
-        if immunity_timer <= 0: player_hp -= 0.5
-        
+        if math.sin(cycle) < -0.6:
+            if math.sqrt((p['x']-player_pos[0])**2 + (p['z']-player_pos[2])**2) < 15 and immunity_timer <= 0:
+                player_hp -= 2.0 
+
+    # Spikes
+    if map_data[gx][gz] == C_SPIKE and immunity_timer <= 0: player_hp -= 0.5
+
     spike_cooldown += 1
-    if spike_cooldown > 50: # Faster firing (approx 1 sec)
+    if spike_cooldown > 50: 
         spike_cooldown = 0
         for x in range(MAP_DIM):
             for z in range(MAP_DIM):
                 if map_data[x][z] == C_SPIKE:
                     wx, wz = x*CELL_SIZE, z*CELL_SIZE
-                    # Increased detection range (150)
                     if math.sqrt((wx-player_pos[0])**2 + (wz-player_pos[2])**2) < 150:
                         for ang in range(0, 360, 45):
                             rad = math.radians(ang)
                             projectiles.append({'x': wx, 'z': wz, 'dx': math.cos(rad)*1.5, 'dz': math.sin(rad)*1.5, 'life': 80})
 
-    # --- C. ENEMY LOGIC ---
-    # (Sphere Heads Logic Removed)
-
+    # --- C. BIRD & BOSS LOGIC ---
     for b in birds:
         b['x'] += math.sin(b['angle']) * b['speed']
         b['z'] += math.cos(b['angle']) * b['speed']
         if random.random() < 0.05: b['angle'] += random.uniform(-0.5, 0.5)
+        
+        # NEW: Bird Shooting Logic
+        b['shoot_timer'] += 1
+        dist_to_player = math.sqrt((b['x']-player_pos[0])**2 + (b['z']-player_pos[2])**2)
+        if b['shoot_timer'] > 100 and dist_to_player < 300: # Fire every 100 frames if close
+            b['shoot_timer'] = 0
+            # Calculate angle to player
+            aim_angle = math.atan2(player_pos[0] - b['x'], player_pos[2] - b['z'])
+            projectiles.append({
+                'x': b['x'], 'z': b['z'], 
+                'dx': math.sin(aim_angle)*2.5, # Fast bird bullets
+                'dz': math.cos(aim_angle)*2.5, 
+                'life': 100
+            })
 
-    # --- D. UPDATES ---
+    # NEW: BOSS LOGIC
+    if not boss_obj['dead']:
+        boss_dist = math.sqrt((boss_obj['x']-player_pos[0])**2 + (boss_obj['z']-player_pos[2])**2)
+        if boss_dist < 600: # Only attack if player is in the arena
+            boss_obj['shoot_timer'] += 1
+            
+            # ATTACK: SHOCKWAVE (Every 60 frames / 1 sec approx)
+            if boss_obj['shoot_timer'] > 60:
+                boss_obj['shoot_timer'] = 0
+                # Fire 8 bullets in a ring
+                for i in range(8):
+                    angle = (i * 45) * (math.pi / 180)
+                    projectiles.append({
+                        'x': boss_obj['x'], 'z': boss_obj['z'],
+                        'dx': math.sin(angle) * 3.0,
+                        'dz': math.cos(angle) * 3.0,
+                        'life': 150
+                    })
+
+    # --- D. UPDATE PROJECTILES ---
     active_projs = []
     for p in projectiles:
         p['x'] += p['dx']; p['z'] += p['dz']; p['life'] -= 1
+        
         if math.sqrt((p['x']-player_pos[0])**2 + (p['z']-player_pos[2])**2) < 10 and immunity_timer <= 0:
             player_hp -= 5; p['life'] = 0
+            
         gx, gz = int(p['x']/CELL_SIZE), int(p['z']/CELL_SIZE)
         if 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM and map_data[gx][gz] == C_WALL: p['life'] = 0
+        
         if p['life'] > 0: active_projs.append(p)
     projectiles = active_projs
 
+    # Update Daggers
     active_daggers = []
     for d in player_daggers:
         d['x'] += math.sin(d['angle'])*8; d['z'] -= math.cos(d['angle'])*8; d['life'] -= 1
         hit = False
         
-        # Hit Bird
         for b in birds:
             if not hit and math.sqrt((d['x']-b['x'])**2 + (d['z']-b['z'])**2) < 15:
-                birds.remove(b); hit = True
-                # Drop AMMO (Bullets)
-                loot.append({'x':b['x'], 'z':b['z'], 'type': 'AMMO'})
+                birds.remove(b); hit = True; loot.append({'x':b['x'], 'z':b['z'], 'type': 'AMMO'})
                 break
-                
-        # Hit Boss
+        
         if not hit and not boss_obj['dead']:
-             if math.sqrt((d['x']-boss_obj['x'])**2 + (d['z']-boss_obj['z'])**2) < 30:
-                 boss_obj['hp'] -= 10; hit = True
-                 if boss_obj['hp'] <= 0: boss_obj['dead'] = True
-                 
-        # Hit Spike
+            if math.sqrt((d['x']-boss_obj['x'])**2 + (d['z']-boss_obj['z'])**2) < 30:
+                boss_obj['hp'] -= 50; hit = True # Daggers deal 50 dmg
+                if boss_obj['hp'] <= 0: boss_obj['dead'] = True
+        
         dgx, dgz = int(round(d['x']/CELL_SIZE)), int(round(d['z']/CELL_SIZE))
         if 0 <= dgx < MAP_DIM and 0 <= dgz < MAP_DIM:
             if map_data[dgx][dgz] == C_SPIKE:
-                map_data[dgx][dgz] = C_EMPTY # Destroy Spike
-                hit = True
-                # Drop HP (Life) more often
-                loot.append({'x':d['x'], 'z':d['z'], 'type': 'HP' if random.random() < 0.8 else 'AMMO'})
+                map_data[dgx][dgz] = C_EMPTY; hit = True; loot.append({'x':d['x'], 'z':d['z'], 'type': 'HP' if random.random() < 0.8 else 'AMMO'})
 
         if not hit and d['life'] > 0: active_daggers.append(d)
     player_daggers = active_daggers
 
+    # Loot
     active_loot = []
     for l in loot:
         if math.sqrt((player_pos[0]-l['x'])**2 + (player_pos[2]-l['z'])**2) < 15:
             if l['type'] == 'AMMO': player_ammo += 5
             elif l['type'] == 'HP': player_hp = min(100, player_hp+20)
-            elif l['type'] == 'IMMUNITY': immunity_timer = 900
         else: active_loot.append(l)
     loot = active_loot
 
     particles = [p for p in particles if p['life'] > 0]
     for p in particles: p['x']+=p['dx']; p['y']+=p['dy']; p['z']+=p['dz']; p['life']-=1
-    
+
     if player_hp <= 0: game_over = True
 
 # ==========================================
 # 4. Input & Main
 # ==========================================
+def draw_minimap():
+    glDisable(GL_DEPTH_TEST)
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
+    gluOrtho2D(0, WINDOW_WIDTH, 0, WINDOW_HEIGHT)
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
+
+    ms = 150; mx = 20; my = 20
+    glColor3f(0, 0, 0); glRectf(mx, my, mx+ms, my+ms)
+    glColor3f(0.5, 0.5, 0.5); glLineWidth(2)
+    glBegin(GL_LINE_LOOP); glVertex2f(mx, my); glVertex2f(mx+ms, my); glVertex2f(mx+ms, my+ms); glVertex2f(mx, my+ms); glEnd()
+
+    world_max = MAP_DIM * CELL_SIZE
+    px = (player_pos[0]/world_max)*ms; pz = (player_pos[2]/world_max)*ms
+    glColor3f(0, 0.6, 1)
+    glPushMatrix(); glTranslatef(mx+px, my+pz, 0); glRectf(-3, -3, 3, 3); glPopMatrix()
+
+    if not boss_obj['dead']:
+        bx = (boss_obj['x']/world_max)*ms; bz = (boss_obj['z']/world_max)*ms
+        glColor3f(1, 0, 0)
+        glPushMatrix(); glTranslatef(mx+bx, my+bz, 0); glRectf(-4, -4, 4, 4); glPopMatrix()
+
+    glMatrixMode(GL_PROJECTION); glPopMatrix()
+    glMatrixMode(GL_MODELVIEW); glPopMatrix()
+    glEnable(GL_DEPTH_TEST)
+
 def setup_camera():
     glMatrixMode(GL_PROJECTION); glLoadIdentity()
     gluPerspective(60, WINDOW_WIDTH/WINDOW_HEIGHT, 1, 1200)
@@ -599,7 +614,7 @@ def showScreen():
     glutSwapBuffers()
 
 def idle(): update_physics(); glutPostRedisplay()
-def keyDown(key, x, y): key_states[key] = True; key_states[key.lower()] = True; 
+def keyDown(key, x, y): key_states[key] = True; key_states[key.lower()] = True;
 def keyUp(key, x, y): key_states[key] = False; key_states[key.lower()] = False
 def specialDown(key, x, y): key_states[key] = True
 def specialUp(key, x, y): key_states[key] = False
@@ -614,16 +629,16 @@ def main():
     glutInit()
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
     glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT)
-    glutCreateWindow(b"Level 2: The Iron Gauntlet")
+    glutCreateWindow(b"Level 2: The Iron Gauntlet - Boss Fight")
     glEnable(GL_DEPTH_TEST)
-    
-    # FOG SETUP
+
     glEnable(GL_FOG)
     glFogfv(GL_FOG_COLOR, [0.05, 0.05, 0.05, 1.0])
     glFogf(GL_FOG_MODE, GL_EXP2)
     glFogf(GL_FOG_DENSITY, 0.002)
-    
+
     generate_level_2()
+
     glutDisplayFunc(showScreen)
     glutIdleFunc(idle)
     glutKeyboardFunc(keyDown); glutKeyboardUpFunc(keyUp)
