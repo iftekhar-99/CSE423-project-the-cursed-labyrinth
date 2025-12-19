@@ -373,17 +373,36 @@ def create_display_list():
                 glPushMatrix()
                 glTranslatef(wx, WALL_HEIGHT/2, wz)
                 glScalef(1, WALL_HEIGHT/CELL_SIZE, 1) 
-                # CHANGED: Earth/Rock Brown color
-                glColor3f(0.45, 0.35, 0.25) 
+                
+                # [VISUAL FIX] Organic "Poisoned Earth" Look
+                # 1. Calculate Contamination Noise (Organic patches)
+                # Low freq (x*0.2) creates large patches, High freq (random) creates grit
+                contamination = math.sin(x * 0.2) * math.cos(z * 0.25)
+                grit = random.uniform(-0.05, 0.05)
+                
+                if contamination > 0.1:
+                    # POISONED WALL (Sickly Green/Mud mix)
+                    # The higher the contamination, the greener it gets
+                    r = 0.25 + grit
+                    g = 0.35 + (contamination * 0.3) + grit
+                    b = 0.15 + grit
+                else:
+                    # NORMAL EARTH/ROCK (Dark Muddy Brown)
+                    r = 0.35 + grit
+                    g = 0.25 + grit
+                    b = 0.20 + grit
+                
+                glColor3f(r, g, b) 
                 glutSolidCube(CELL_SIZE)
+                
                 glPopMatrix()
                 
             elif cell == C_EMPTY or cell == C_START:
-                # CHANGED: Forest Green Floor
+                # Darker Forest Floor to match new walls
                 if (x+z)%2 == 0: 
-                    glColor3f(0.1, 0.4, 0.1) 
+                    glColor3f(0.08, 0.3, 0.08) 
                 else: 
-                    glColor3f(0.15, 0.45, 0.15) 
+                    glColor3f(0.12, 0.35, 0.12) 
                 
                 glBegin(GL_QUADS)
                 glVertex3f(wx-CELL_SIZE/2, 0, wz-CELL_SIZE/2)
@@ -393,7 +412,8 @@ def create_display_list():
                 glEnd()
                 
             elif cell == C_BOSS:
-                glColor3f(0.15, 0.15, 0.15)
+                # Dark Stone for Boss Arena
+                glColor3f(0.1, 0.1, 0.1)
                 glBegin(GL_QUADS)
                 glVertex3f(wx-CELL_SIZE/2, 0, wz-CELL_SIZE/2)
                 glVertex3f(wx+CELL_SIZE/2, 0, wz-CELL_SIZE/2)
@@ -426,13 +446,16 @@ def draw_entities():
                 glPushMatrix()
                 # Downward Pulse Animation
                 pulse = math.sin(global_time * 2) * 2 - 5
+                
+                # Move to the specific cell location
                 glTranslatef(wx, pulse, wz) 
                 
+                # [FIX] Draw relative to the translated center (Local Coordinates)
                 glBegin(GL_QUADS)
-                glVertex3f(wx-CELL_SIZE/2, 0, wz-CELL_SIZE/2)
-                glVertex3f(wx+CELL_SIZE/2, 0, wz-CELL_SIZE/2)
-                glVertex3f(wx+CELL_SIZE/2, 0, wz+CELL_SIZE/2)
-                glVertex3f(wx-CELL_SIZE/2, 0, wz+CELL_SIZE/2)
+                glVertex3f(-CELL_SIZE/2, 0, -CELL_SIZE/2)
+                glVertex3f( CELL_SIZE/2, 0, -CELL_SIZE/2)
+                glVertex3f( CELL_SIZE/2, 0,  CELL_SIZE/2)
+                glVertex3f(-CELL_SIZE/2, 0,  CELL_SIZE/2)
                 glEnd()
                 glPopMatrix()
     

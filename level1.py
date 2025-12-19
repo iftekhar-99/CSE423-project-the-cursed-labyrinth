@@ -373,17 +373,36 @@ def create_display_list():
                 glPushMatrix()
                 glTranslatef(wx, WALL_HEIGHT/2, wz)
                 glScalef(1, WALL_HEIGHT/CELL_SIZE, 1) 
-                # CHANGED: Earth/Rock Brown color
-                glColor3f(0.45, 0.35, 0.25) 
+                
+                # [VISUAL FIX] Organic "Poisoned Earth" Look
+                # 1. Calculate Contamination Noise (Organic patches)
+                # Low freq (x*0.2) creates large patches, High freq (random) creates grit
+                contamination = math.sin(x * 0.2) * math.cos(z * 0.25)
+                grit = random.uniform(-0.05, 0.05)
+                
+                if contamination > 0.1:
+                    # POISONED WALL (Sickly Green/Mud mix)
+                    # The higher the contamination, the greener it gets
+                    r = 0.25 + grit
+                    g = 0.35 + (contamination * 0.3) + grit
+                    b = 0.15 + grit
+                else:
+                    # NORMAL EARTH/ROCK (Dark Muddy Brown)
+                    r = 0.35 + grit
+                    g = 0.25 + grit
+                    b = 0.20 + grit
+                
+                glColor3f(r, g, b) 
                 glutSolidCube(CELL_SIZE)
+                
                 glPopMatrix()
                 
             elif cell == C_EMPTY or cell == C_START:
-                # CHANGED: Forest Green Floor
+                # Darker Forest Floor to match new walls
                 if (x+z)%2 == 0: 
-                    glColor3f(0.1, 0.4, 0.1) 
+                    glColor3f(0.08, 0.3, 0.08) 
                 else: 
-                    glColor3f(0.15, 0.45, 0.15) 
+                    glColor3f(0.12, 0.35, 0.12) 
                 
                 glBegin(GL_QUADS)
                 glVertex3f(wx-CELL_SIZE/2, 0, wz-CELL_SIZE/2)
@@ -393,7 +412,8 @@ def create_display_list():
                 glEnd()
                 
             elif cell == C_BOSS:
-                glColor3f(0.15, 0.15, 0.15)
+                # Dark Stone for Boss Arena
+                glColor3f(0.1, 0.1, 0.1)
                 glBegin(GL_QUADS)
                 glVertex3f(wx-CELL_SIZE/2, 0, wz-CELL_SIZE/2)
                 glVertex3f(wx+CELL_SIZE/2, 0, wz-CELL_SIZE/2)
@@ -426,13 +446,16 @@ def draw_entities():
                 glPushMatrix()
                 # Downward Pulse Animation
                 pulse = math.sin(global_time * 2) * 2 - 5
+                
+                # Move to the specific cell location
                 glTranslatef(wx, pulse, wz) 
                 
+                # [FIX] Draw relative to the translated center (Local Coordinates)
                 glBegin(GL_QUADS)
-                glVertex3f(wx-CELL_SIZE/2, 0, wz-CELL_SIZE/2)
-                glVertex3f(wx+CELL_SIZE/2, 0, wz-CELL_SIZE/2)
-                glVertex3f(wx+CELL_SIZE/2, 0, wz+CELL_SIZE/2)
-                glVertex3f(wx-CELL_SIZE/2, 0, wz+CELL_SIZE/2)
+                glVertex3f(-CELL_SIZE/2, 0, -CELL_SIZE/2)
+                glVertex3f( CELL_SIZE/2, 0, -CELL_SIZE/2)
+                glVertex3f( CELL_SIZE/2, 0,  CELL_SIZE/2)
+                glVertex3f(-CELL_SIZE/2, 0,  CELL_SIZE/2)
                 glEnd()
                 glPopMatrix()
     
@@ -809,7 +832,7 @@ def in_boss_arena(pos, padding=0):
     return (bx - half_size < pos[0] < bx + half_size) and (bz - half_size < pos[2] < bz + half_size)
 
 def close_boss_gate():
-    global display_list, enemies
+    global display_list
     # Match the gate position from generate_level_1
     b_x = MAP_DIM - 35
     b_y = MAP_DIM - 35
@@ -825,17 +848,6 @@ def close_boss_gate():
         glDeleteLists(display_list, 1)
         display_list = None
         create_display_list()
-
-    # Initial Boss Minions (20 Slimes)
-    arena_center_x = (MAP_DIM - 20) * CELL_SIZE
-    arena_center_z = (MAP_DIM - 20) * CELL_SIZE
-    for _ in range(20):
-        enemies.append({
-            'x': arena_center_x, 
-            'z': arena_center_z, 
-            'home_x': arena_center_x, 
-            'home_z': arena_center_z
-        })
 
 def check_sprint():
     global is_sprinting
@@ -890,6 +902,10 @@ def update_physics():
                  rx = random.uniform(arena_min_x, arena_max_x)
                  rz = random.uniform(arena_min_z, arena_max_z)
                  
+                 # Check if spot is valid (not a wall)
+                 # Approximated by just picking random coordinates in the box
+                 # Since the arena is mostly empty/acid, this is safe enough.
+                 
                  d_p = math.sqrt((rx - player_pos[0])**2 + (rz - player_pos[2])**2)
                  if d_p > max_d:
                      max_d = d_p
@@ -899,6 +915,7 @@ def update_physics():
              boss_obj['z'] = best_tz
              boss_obj['teleport_cd'] = 200 # 3-4 seconds cooldown
              
+             # Particles
              for _ in range(30): particles.append({'x': boss_obj['x'], 'y': 10, 'z': boss_obj['z'], 'life': 30, 'dx': random.uniform(-3,3), 'dy': random.uniform(-3,3), 'dz': random.uniform(-3,3)})
         
         if boss_obj['teleport_cd'] > 0: boss_obj['teleport_cd'] -= 1
@@ -909,10 +926,21 @@ def update_physics():
             boss_obj['rain_center_x'] = player_pos[0]
             boss_obj['rain_center_z'] = player_pos[2]
             
-        # [Requirement] MAINTAIN 20 Gas (Slimes spawn on death)
+        # [Requirement] MAINTAIN 20 Slimes and 20 Gas
+        # 1. Count current in arena
+        current_slimes = 0
+        for e in enemies:
+             if in_boss_arena([e['x'], 0, e['z']], 0): current_slimes += 1
+        
         current_gas = 0
         for g in gas_clouds:
              if in_boss_arena([g['x'], 0, g['z']], 0): current_gas += 1
+             
+        # 2. INSTANTLY Replenish
+        while current_slimes < 20:
+             # Spawn Slime at Boss
+             enemies.append({'x': boss_obj['x'], 'z': boss_obj['z'], 'home_x': boss_obj['x'], 'home_z': boss_obj['z']})
+             current_slimes += 1
              
         while current_gas < 20:
              # Spawn Gas at Boss, Random Direction
@@ -951,7 +979,9 @@ def update_physics():
         
     # [Requirement] Exit Gate appears after boss defeat
     if boss_defeated:
-         
+         # Check if player reaches the Exit Gate
+         # Gate location: Back of arena (MAP_DIM - 25, MAP_DIM - 35) -> same as boss spawn roughly?
+         # Let's put it at (MAP_DIM - 25, MAP_DIM - 35)
          ex_x = (MAP_DIM - 25) * CELL_SIZE
          ex_z = (MAP_DIM - 35) * CELL_SIZE
          dist_exit = math.sqrt((player_pos[0] - ex_x)**2 + (player_pos[2] - ex_z)**2)
@@ -1120,41 +1150,27 @@ def update_physics():
         g['x'] = max(CELL_SIZE, min(g['x'], (MAP_DIM-1)*CELL_SIZE))
         g['z'] = max(CELL_SIZE, min(g['z'], (MAP_DIM-1)*CELL_SIZE))
 
-    # Gas Logic
+    # Gas
     active_gas = []
     for g in gas_clouds:
         g['x'] += g['dx']; g['z'] += g['dz']
-        
         if g.get('type') == 'BOSS':
              g['life'] -= 1
-             
-             # REASON 3 FIX: Bounce off Arena Walls
-             # Define Arena Bounds
+             # Bounce off Arena Walls
              arena_min_x = (MAP_DIM - 35) * CELL_SIZE + CELL_SIZE
              arena_max_x = (MAP_DIM - 5) * CELL_SIZE - CELL_SIZE
              arena_min_z = (MAP_DIM - 35) * CELL_SIZE + CELL_SIZE
              arena_max_z = (MAP_DIM - 5) * CELL_SIZE - CELL_SIZE
              
-             # Bounce X
-             if g['x'] < arena_min_x or g['x'] > arena_max_x:
-                 g['dx'] *= -1
-                 g['x'] += g['dx'] * 2 # Push back in
-                 
-             # Bounce Z
-             if g['z'] < arena_min_z or g['z'] > arena_max_z:
-                 g['dz'] *= -1
-                 g['z'] += g['dz'] * 2
-                 
+             if g['x'] < arena_min_x or g['x'] > arena_max_x: g['dx'] *= -1
+             if g['z'] < arena_min_z or g['z'] > arena_max_z: g['dz'] *= -1
+             
              if g['life'] <= 0: continue
         else:
-             # Normal Gas Logic
              if math.sqrt((g['x']-g['home_x'])**2 + (g['z']-g['home_z'])**2) > 50: g['dx']*=-1; g['dz']*=-1
         
-        # Player Collision
-        if math.sqrt((player_pos[0]-g['x'])**2 + (player_pos[2]-g['z'])**2) < 20 and immunity_timer <= 0: 
-            player_hp -= 0.3
-        else: 
-            active_gas.append(g)
+        if math.sqrt((player_pos[0]-g['x'])**2 + (player_pos[2]-g['z'])**2) < 20 and immunity_timer <= 0: player_hp -= 0.3
+        else: active_gas.append(g)
     gas_clouds = active_gas
 
     # Enemies
@@ -1212,46 +1228,61 @@ def update_physics():
         
         if not hit:
             if boss_active:
-                # Check Boss Collision
                 if math.sqrt((d['x']-boss_obj['x'])**2 + (d['z']-boss_obj['z'])**2) < 25:
                     hit = True
                     boss_obj['hp'] -= 50
-                    boss_obj['teleport_cd'] = max(0, boss_obj['teleport_cd'] - 50)
+                    boss_obj['teleport_cd'] = max(0, boss_obj['teleport_cd'] - 50) # Reduce CD on hit
                     
-                    # ... (Keep existing evasion/teleport logic here) ...
-                    # ... (Particles code here) ...
+                    # [Requirement] Move Away / Evade
+                    # Vector Player -> Boss
+                    vx = boss_obj['x'] - player_pos[0]
+                    vz = boss_obj['z'] - player_pos[2]
+                    v_len = math.sqrt(vx*vx + vz*vz)
+                    if v_len > 0: vx /= v_len; vz /= v_len
+                    
+                    # 1. Back away (Main component)
+                    move_dist = 40
+                    
+                    # 2. Side shift (Evade)
+                    side = 1 if random.random() < 0.5 else -1
+                    # Perpendicular: (-vz, vx)
+                    sx = -vz * side * 30
+                    sz = vx * side * 30
+                    
+                    target_x = boss_obj['x'] + (vx * move_dist) + sx
+                    target_z = boss_obj['z'] + (vz * move_dist) + sz
+                    
+                    # [Requirement] CLAMP TO ARENA
+                    arena_min_x = (MAP_DIM - 35) * CELL_SIZE + 20
+                    arena_max_x = (MAP_DIM - 5) * CELL_SIZE - 20
+                    arena_min_z = (MAP_DIM - 35) * CELL_SIZE + 20
+                    arena_max_z = (MAP_DIM - 5) * CELL_SIZE - 20
+                    
+                    boss_obj['x'] = max(arena_min_x, min(target_x, arena_max_x))
+                    boss_obj['z'] = max(arena_min_z, min(target_z, arena_max_z))
 
-                    # REASON 1 FIX: Loot only on death
+                    for _ in range(10): particles.append({'x': boss_obj['x'], 'y': 20, 'z': boss_obj['z'], 'life': 20, 'dx': random.uniform(-2,2), 'dy': random.uniform(-2,2), 'dz': random.uniform(-2,2)})
+                    
                     if boss_obj['hp'] <= 0:
-                        boss_active = False
-                        boss_defeated = True
-                        rain_active = False
-                        # ONLY DROP GEM ON DEATH
-                        loot.append({'x': boss_obj['x'], 'z': boss_obj['z'], 'type': 'POISON_GEM'}) 
+                        boss_active = False; boss_defeated = True; rain_active = False
+                        # [Requirement] Defeat Reward: Poison Gem Stone
+                        loot.append({'x': boss_obj['x'], 'z': boss_obj['z'], 'type': 'POISON_GEM'})
                         max_stamina = 120; player_stamina = 120
                         max_player_hp = 120; player_hp = 120
 
-            # Check Minion (Enemy) Collision
             remaining = []
             for e in enemies:
                 if math.sqrt((d['x']-e['x'])**2 + (d['z']-e['z'])**2) < 20:
                     hit = True
-                    # Particles
                     for _ in range(8): particles.append({'x': e['x'], 'y': 10, 'z': e['z'], 'life': 20, 'dx': random.uniform(-1,1), 'dy': random.uniform(0,2), 'dz': random.uniform(-1,1)})
-                    
-                    # Normal Loot Drops (Keep this)
                     r = random.random()
-                    if r < 0.5: loot.append({'x': e['x'], 'z': e['z'], 'type': 'BOTTLE'})
-                    elif r < 0.55: loot.append({'x': e['x'], 'z': e['z'], 'type': 'HP'})
-                    elif r < 0.8: loot.append({'x': e['x'], 'z': e['z'], 'type': 'AMMO'})
-                    
-                    # REASON 2 FIX: Instant Respawn if Boss Active
-                    if boss_active:
-                        # Spawn 2-3 new slimes at Boss location
-                        for _ in range(random.randint(2, 3)):
-                             enemies.append({'x': boss_obj['x'], 'z': boss_obj['z'], 'home_x': boss_obj['x'], 'home_z': boss_obj['z']})
-                else:
-                    remaining.append(e)
+                    # Loot Drops: Increased AMMO/STAMINA, Reduced BOTTLE
+                    if r < 0.5: loot.append({'x': e['x'], 'z': e['z'], 'type': 'BOTTLE'}) # Reduced from 0.4
+                    elif r < 0.5: loot.append({'x': e['x'], 'z': e['z'], 'type': 'HP'})
+                    elif r < 0.8: loot.append({'x': e['x'], 'z': e['z'], 'type': 'AMMO'}) # Increased range
+                    elif r < 0.9: loot.append({'x': e['x'], 'z': e['z'], 'type': 'IMMUNITY'})
+                    elif r < 0.9: loot.append({'x': e['x'], 'z': e['z'], 'type': 'STAMINA'})
+                else: remaining.append(e)
             enemies = remaining
         
         # Check Ghost Hit (Stun Effect)
