@@ -501,48 +501,58 @@ def draw_minimap():
                 glColor3f(1, 1, 1); glPointSize(4); glBegin(GL_POINTS)
                 glVertex2f(margin + ex, margin + ez); glEnd()
 
-    glMatrixMode(GL_PROJECTION); glPopMatrix()
-    glMatrixMode(GL_MODELVIEW); glPopMatrix()
+
+    glMatrixMode(GL_MODELVIEW)
+    glPopMatrix()
+    glMatrixMode(GL_PROJECTION)
+    glPopMatrix()
+    glMatrixMode(GL_MODELVIEW)
     glEnable(GL_DEPTH_TEST)
 
-def draw_hud():
-    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
+def draw_text(x, y, text, font=GLUT_BITMAP_HELVETICA_18, r=1, g=1, b=1):
+    glColor3f(r, g, b)
+    glMatrixMode(GL_PROJECTION)
+    glPushMatrix()
+    glLoadIdentity()
     gluOrtho2D(0, WINDOW_WIDTH, 0, WINDOW_HEIGHT)
-    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
+    glMatrixMode(GL_MODELVIEW)
+    glPushMatrix()
+    glLoadIdentity()
+    glRasterPos2f(x, y)
+    for ch in text:
+        glutBitmapCharacter(font, ord(ch))
+    glPopMatrix()
+    glMatrixMode(GL_PROJECTION)
+    glPopMatrix()
+    glMatrixMode(GL_MODELVIEW)
+
+def draw_hud():
     glDisable(GL_DEPTH_TEST)
-    glColor3f(1, 1, 1)
-    glRasterPos2f(20, WINDOW_HEIGHT - 30)
     
     shield_status = f"SHIELD: {int(player_shield_timer/20)}s" if player_shield_timer > 0 else "OFF"
     msg = f"LEVEL 3 | HP: {int(player_hp)}/200 | ROCKS: {rock_count} | BAG: {shield_pill_bag} PILLS | {shield_status}"
-    for ch in msg: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+    draw_text(20, WINDOW_HEIGHT - 30, msg)
     
     if rain_active_timer > 0:
-        glColor3f(1, 0.5, 0); glRasterPos2f(WINDOW_WIDTH/2 - 60, WINDOW_HEIGHT - 30)
         r_msg = "!!! ROCK RAIN !!!"
-        for ch in r_msg: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+        draw_text(WINDOW_WIDTH/2 - 60, WINDOW_HEIGHT - 30, r_msg, r=1, g=0.5, b=0)
 
     if boss_active and not boss_defeated:
-        glColor3f(1, 0.2, 0.2); glRasterPos2f(WINDOW_WIDTH/2 - 50, WINDOW_HEIGHT - 50)
         b_msg = f"GOLEM: {boss_obj['hp']}/{boss_obj['max_hp']}"
-        for ch in b_msg: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+        draw_text(WINDOW_WIDTH/2 - 50, WINDOW_HEIGHT - 50, b_msg, r=1, g=0.2, b=0.2)
 
     if game_over:
-        glColor3f(1, 0, 0); raws = "YOU DIED"
-        glRasterPos2f(WINDOW_WIDTH/2 - 50, WINDOW_HEIGHT/2)
-        for ch in raws: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+        raws = "YOU DIED"
+        draw_text(WINDOW_WIDTH/2 - 50, WINDOW_HEIGHT/2, raws, r=1, g=0, b=0)
     if level_complete:
-        glColor3f(0, 1, 0)
         raws = "YOU WIN" 
-        glRasterPos2f(WINDOW_WIDTH/2 - 50, WINDOW_HEIGHT/2)
-        for ch in raws: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+        draw_text(WINDOW_WIDTH/2 - 50, WINDOW_HEIGHT/2, raws, r=0, g=1, b=0)
         raws2 = "ALL LEVELS PASSED"
-        glRasterPos2f(WINDOW_WIDTH/2 - 100, WINDOW_HEIGHT/2 - 30)
+        draw_text(WINDOW_WIDTH/2 - 100, WINDOW_HEIGHT/2 - 30, raws2, r=0, g=1, b=0)
         for ch in raws2: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
         
     glEnable(GL_DEPTH_TEST)
-    glMatrixMode(GL_PROJECTION); glPopMatrix()
-    glMatrixMode(GL_MODELVIEW); glPopMatrix()
+
 
 # ==========================================
 # 3. Physics & Logic
@@ -809,10 +819,12 @@ def update_physics():
 
     if player_hp <= 0: game_over = True
 
-def setup_camera():
-    glMatrixMode(GL_PROJECTION); glLoadIdentity()
+def setupCamera():
+    glMatrixMode(GL_PROJECTION)  # Switch to projection matrix mode
+    glLoadIdentity()  # Reset the projection matrix
     gluPerspective(60, WINDOW_WIDTH/WINDOW_HEIGHT, 1, 1000)
-    glMatrixMode(GL_MODELVIEW); glLoadIdentity()
+    glMatrixMode(GL_MODELVIEW)  # Switch to model-view matrix mode
+    glLoadIdentity()  # Reset the model-view matrix
     lx = player_pos[0] + math.sin(player_angle) * 100
     lz = player_pos[2] - math.cos(player_angle) * 100
     gluLookAt(player_pos[0], 25, player_pos[2], lx, 25, lz, 0, 1, 0)
@@ -838,67 +850,85 @@ def mouseListener(button, state, x, y):
         if target_rabbit: new_rock['target'] = target_rabbit
         thrown_rocks.append(new_rock)
 
-def keyDown(key, x, y):
-    global cheat_mode, auto_gun_follow, rock_count, cheat_timer, cheat_cooldown, boss_active, boss_obj, boss_defeated, map_data, display_list
+def keyboardListener(key, x, y):
+    global player_angle, cheat_mode, cheat_timer, cheat_cooldown, auto_gun_follow, player_shield_timer, shield_pill_bag, rock_count, boss_active, boss_obj, boss_defeated, map_data, display_list
     key_states[key] = True
-    if isinstance(key, bytes):
-        key_states[key.lower()] = True
-        if key.lower() == b'r': generate_level_3()
-        if key.lower() == b'c': 
-            if not cheat_mode and cheat_cooldown <= 0:
-                cheat_mode = True
-                cheat_timer = 200 # 10 second duration (200 * 0.05)
-        if key.lower() == b'v': 
-            if cheat_mode: auto_gun_follow = not auto_gun_follow
-        if key.lower() == b'l':
-             # DIRECT BOSS DAMAGE
-             if boss_active:
-                boss_obj['hp'] -= 100
-                if boss_obj['hp'] <= 0:
-                    boss_obj['hp'] = 0
-                    boss_active = False
-                    boss_defeated = True
-                    # OPEN GATE: Remove walls leading to the light (Exit is at +9, +14)
-                    bx, bz = MAP_DIM-22, MAP_DIM-22
-                    for i in range(bx, bx+18):
-                        for j in range(bz+13, bz+16):
-                            if map_data[i][j] == C_WALL: map_data[i][j] = C_EMPTY
-                    display_list = None
-             # EXISTING ROCK THROW LOGIC
-             if rock_count > 0:
-                rock_count -= 1
-                thrown_rocks.append({'x': player_pos[0], 'y': 25, 'z': player_pos[2], 'vx': math.sin(player_angle) * 8, 'vy': 2, 'vz': -math.cos(player_angle) * 8})
 
-def keyUp(key, x, y): 
+    if key == b'c' and cheat_cooldown == 0:
+        cheat_mode = not cheat_mode
+        cheat_timer = 300 # 15 seconds
+        cheat_cooldown = 600 # 30 seconds cooldown
+        print(f"Cheat Mode: {cheat_mode}")
+    elif key == b'g':
+        auto_gun_follow = not auto_gun_follow
+        print(f"Auto Gun Follow: {auto_gun_follow}")
+    elif key == b's' and shield_pill_bag > 0 and player_shield_timer == 0:
+        shield_pill_bag -= 1
+        player_shield_timer = 200 # 10 seconds shield
+        print("Shield Activated!")
+    elif key == b'r':
+        generate_level_3()
+    elif key == b'l':
+        if boss_active:
+            boss_obj['hp'] -= 100
+            if boss_obj['hp'] <= 0:
+                boss_obj['hp'] = 0
+                boss_active = False
+                boss_defeated = True
+                bx, bz = MAP_DIM-22, MAP_DIM-22
+                for i in range(bx, bx+18):
+                    for j in range(bz+13, bz+16):
+                        if map_data[i][j] == C_WALL: map_data[i][j] = C_EMPTY
+                display_list = None
+        if rock_count > 0:
+            rock_count -= 1
+            thrown_rocks.append({'x': player_pos[0], 'y': 25, 'z': player_pos[2], 'vx': math.sin(player_angle) * 8, 'vy': 2, 'vz': -math.cos(player_angle) * 8})
+
+def keyboardUpListener(key, x, y): 
     key_states[key] = False
-    if isinstance(key, bytes): key_states[key.lower()] = False
 
-def specialDown(key, x, y): key_states[key] = True
-def specialUp(key, x, y): key_states[key] = False
+def specialKeyListener(key, x, y): key_states[key] = True
+def specialKeyUpListener(key, x, y): key_states[key] = False
 
 def showScreen():
+    glPushMatrix() # Push the current matrix onto the stack
+    # Clear color and depth buffers
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-    setup_camera()
-    if display_list is None: create_display_list()
+    glLoadIdentity()  # Reset modelview matrix
+    glViewport(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT)  # Set viewport size
+
+    setupCamera()
+
+    # Draw the maze
+    if display_list is None:
+        create_display_list()
     glCallList(display_list)
+
     draw_entities()
     draw_hud()
-    draw_minimap() 
+    draw_minimap()
+
+    # Swap buffers for smooth rendering (double buffering)
     glutSwapBuffers()
+    glPopMatrix() # Pop the matrix pushed at the beginning of showScreen()
+
+def idle():
+    update_physics()
+    glutPostRedisplay()
 
 def main():
     glutInit()
-    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
-    glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT)
-    glutCreateWindow(b"Level 3: Final Challenge")
-    glEnable(GL_DEPTH_TEST)
-    generate_level_3()
-    glutDisplayFunc(showScreen)
-    glutIdleFunc(lambda: (update_physics(), glutPostRedisplay()))
-    glutKeyboardFunc(keyDown); glutKeyboardUpFunc(keyUp)
-    glutSpecialFunc(specialDown); glutSpecialUpFunc(specialUp)
-    glutMouseFunc(mouseListener)
-    glutMainLoop()
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)  # Double buffering, RGB color, depth test
+    glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT)  # Window size
+    glutCreateWindow(b"Level 3: Final Challenge")  # Create the window
+    glEnable(GL_DEPTH_TEST) # Enable depth testing for 3D rendering
+    generate_level_3() # Initialize game level
+    glutDisplayFunc(showScreen)  # Register display function
+    glutIdleFunc(idle)  # Register the idle function
+    glutKeyboardFunc(keyboardListener); glutKeyboardUpFunc(keyboardUpListener)  # Register keyboard listeners
+    glutSpecialFunc(specialKeyListener); glutSpecialUpFunc(specialKeyUpListener)  # Register special keyboard listeners
+    glutMouseFunc(mouseListener)  # Register mouse listener
+    glutMainLoop()  # Enter the GLUT main loop
 
 if __name__ == "__main__":
     main()
