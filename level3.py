@@ -17,7 +17,7 @@ WALL_HEIGHT = 70
 C_EMPTY = 0
 C_WALL = 1
 C_MINE_ZONE = 2      
-C_BOSS_ARENA = 3     # Added from bal.txt
+C_BOSS_ARENA = 3     # 
 C_START = 4
 C_EXIT = 5
 
@@ -31,8 +31,8 @@ mines = []
 particles = [] 
 thrown_rocks = []  # Projectiles in the air
 animals = []       # Added Rabbits
-boulders = []      # Added from bal.txt
-boss_minions = []  # Added from bal.txt
+boulders = []      # Added from 
+boss_minions = []  # Added from 
 ground_pills = []  # NEW: Pills dropped on the ground
 rain_rocks = []    # NEW: Rock rain projectiles
 rolling_rocks = [] # NEW: Big rolling obstacles
@@ -206,16 +206,24 @@ def generate_level_3():
             h_tunnel(x1, x2, mid_y)
             v_tunnel(mid_y, y2, x2)
 
-    # --- PILLAR INJECTION (Scatter extra walls for zig-zagging) ---
-    for _ in range(400):
+    # --- PILLAR INJECTION (STRICT 3 TILE GAP & COMPLICATED MAP) ---
+    # Increased attempts to 2500 to fill more space while respecting the strict 3-tile gap
+    for _ in range(2500):
         rx, rz = random.randint(5, MAP_DIM-10), random.randint(5, MAP_DIM-10)
-        # Only place pillars in empty spots that aren't critical arena parts
         if map_data[rx][rz] == C_EMPTY:
-            # Check to ensure we don't block access completely (crude check)
-            empty_neighbors = 0
-            for dx, dz in [(0,1),(0,-1),(1,0),(-1,0)]:
-                if map_data[rx+dx][rz+dz] == C_EMPTY: empty_neighbors += 1
-            if empty_neighbors >= 2:
+            can_place = True
+            # Check a radius of 3 tiles. Any wall within this range invalidates placement.
+            for dx in range(-3, 4):
+                for dz in range(-3, 4):
+                    if dx == 0 and dz == 0: continue
+                    nx, nz = rx + dx, rz + dz
+                    if 0 <= nx < MAP_DIM and 0 <= nz < MAP_DIM:
+                        if map_data[nx][nz] == C_WALL:
+                            can_place = False
+                            break
+                if not can_place: break
+            
+            if can_place:
                 map_data[rx][rz] = C_WALL
 
     # Final entities
@@ -240,8 +248,8 @@ def generate_level_3():
             animals.append({'x': rx*CELL_SIZE, 'z': rz*CELL_SIZE, 'home_x': rx*CELL_SIZE, 'home_z': rz*CELL_SIZE, 'angle': 0, 'active': True})
             placed += 1
 
-    # RANDOM BIG ROLLING ROCKS (REDUCED NUMBER & RANDOM MAZE PLACEMENT)
-    num_big_rocks = random.randint(10, 15)
+    # Initial Big Rocks
+    num_big_rocks = random.randint(15, 20)
     placed_rocks = 0
     while placed_rocks < num_big_rocks:
         rx, rz = random.randint(2, MAP_DIM-2), random.randint(2, MAP_DIM-2)
@@ -600,7 +608,13 @@ def update_physics():
             active_rain_rocks.append(rr)
     rain_rocks = active_rain_rocks
 
-    # --- ROLLING ROCKS LOGIC (Slow tracking speed) ---
+    # --- ROLLING ROCKS LOGIC (RANDOM TIME & SPACE SPAWNING) ---
+    # Spawn a new big rock at random intervals (approx every 3-5 seconds)
+    if random.random() < 0.008: 
+        rx, rz = random.randint(5, MAP_DIM-5), random.randint(5, MAP_DIM-5)
+        if map_data[rx][rz] == C_EMPTY:
+            rolling_rocks.append({'x': rx*CELL_SIZE, 'y': 15, 'z': rz*CELL_SIZE})
+
     for rr in rolling_rocks:
         dx, dz = player_pos[0] - rr['x'], player_pos[2] - rr['z']
         dist = math.sqrt(dx*dx + dz*dz)
@@ -620,6 +634,13 @@ def update_physics():
     # --- UPDATED CHEAT MODE LOGIC ---
     if cheat_mode:
         cheat_timer -= 1
+        
+        # ALWAYS LOCK ANGLE TO BOSS DURING CHEAT DURATION
+        if boss_active:
+            vx = boss_obj['x'] - player_pos[0]
+            vz = boss_obj['z'] - player_pos[2]
+            player_angle = math.atan2(vx, -vz)
+
         # Forced Constant Movement and Forced Shield
         move_speed = player_speed 
         player_shield_timer = 2 # Keep shield above zero to ensure activation
@@ -855,9 +876,28 @@ def keyboardListener(key, x, y):
     key_states[key] = True
 
     if key == b'c' and cheat_cooldown == 0:
-        cheat_mode = not cheat_mode
-        cheat_timer = 300 # 15 seconds
+        cheat_mode = True # Use explicit activation
+        cheat_timer = 200 # 10 seconds (20 ticks per second)
         cheat_cooldown = 600 # 30 seconds cooldown
+        
+        # Reposition and re-orient camera if in boss area
+        if boss_active:
+            # Calculate direction vector from boss to player
+            dx = player_pos[0] - boss_obj['x']
+            dz = player_pos[2] - boss_obj['z']
+            dist = math.sqrt(dx*dx + dz*dz)
+            if dist == 0: dx, dz, dist = 1, 0, 1
+            
+            # Distance player from boss (certain amount: 250 units)
+            safe_dist = 250
+            player_pos[0] = boss_obj['x'] + (dx/dist) * safe_dist
+            player_pos[2] = boss_obj['z'] + (dz/dist) * safe_dist
+            
+            # Adjust initial angle to look directly at the boss
+            vx = boss_obj['x'] - player_pos[0]
+            vz = boss_obj['z'] - player_pos[2]
+            player_angle = math.atan2(vx, -vz)
+
         print(f"Cheat Mode: {cheat_mode}")
     elif key == b'g':
         auto_gun_follow = not auto_gun_follow
