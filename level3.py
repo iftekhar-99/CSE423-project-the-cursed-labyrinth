@@ -58,7 +58,7 @@ base_speed = 5.5 # CHANGED PLAYER SPEED TO 5.5
 player_speed = base_speed
 animal_speed = base_speed / 3.0 # Added Animal Speed
 key_states = {}
-rock_count = 0     # Inventory for collected mines
+rock_count = 10    # Inventory for collected mines - CHANGED FROM 0 TO 10
 
 # --- CHEAT MODE STATE ---
 cheat_mode = False 
@@ -127,7 +127,7 @@ def generate_level_3():
     boss_active = False
     boss_defeated = False
     player_hp = 100.0
-    rock_count = 0
+    rock_count = 10 # CHANGED FROM 0 TO 10
     shield_pill_bag = 0
     player_shield_timer = 0
     boss_obj['hp'] = 700        # RESET TO 700
@@ -551,11 +551,8 @@ def draw_hud():
         raws = "YOU DIED"
         draw_text(WINDOW_WIDTH/2 - 50, WINDOW_HEIGHT/2, raws, r=1, g=0, b=0)
     if level_complete:
-        raws = "YOU WIN" 
-        draw_text(WINDOW_WIDTH/2 - 50, WINDOW_HEIGHT/2, raws, r=0, g=1, b=0)
-        raws2 = "ALL LEVELS PASSED"
-        draw_text(WINDOW_WIDTH/2 - 100, WINDOW_HEIGHT/2 - 30, raws2, r=0, g=1, b=0)
-        for ch in raws2: glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(ch))
+        draw_text(WINDOW_WIDTH/2 - 50, WINDOW_HEIGHT/2 + 20, "YOU WIN", r=0, g=1, b=0)
+        draw_text(WINDOW_WIDTH/2 - 100, WINDOW_HEIGHT/2 - 20, "ALL LEVELS PASSED", r=0, g=1, b=0)
         
     glEnable(GL_DEPTH_TEST)
 
@@ -629,48 +626,63 @@ def update_physics():
     if key_states.get(GLUT_KEY_LEFT): player_angle -= 0.04
     if key_states.get(GLUT_KEY_RIGHT): player_angle += 0.04
 
-    # --- UPDATED CHEAT MODE LOGIC ---
+    # --- UPDATED CHEAT MODE LOGIC (ORBITING AROUND BOSS) ---
     if cheat_mode:
         cheat_timer -= 1
+        player_shield_timer = 2 # Forced Shield ON
         
-        # ALWAYS LOCK ANGLE TO BOSS DURING CHEAT DURATION
         if boss_active:
+            # Calculate distance from boss
+            rel_x = player_pos[0] - boss_obj['x']
+            rel_z = player_pos[2] - boss_obj['z']
+            radius = math.sqrt(rel_x**2 + rel_z**2)
+            
+            # Ensure radius is consistent during rotation
+            if radius < 50: radius = 200 
+            
+            # Update position to rotate around the boss center
+            current_orbit_angle = math.atan2(rel_z, rel_x)
+            new_orbit_angle = current_orbit_angle + 0.03 # Rotation speed
+            
+            new_x = boss_obj['x'] + math.cos(new_orbit_angle) * radius
+            new_z = boss_obj['z'] + math.sin(new_orbit_angle) * radius
+            
+            player_pos[0], player_pos[2] = new_x, new_z
+            
+            # Camera Angle strictly locked on Boss
             vx = boss_obj['x'] - player_pos[0]
             vz = boss_obj['z'] - player_pos[2]
             player_angle = math.atan2(vx, -vz)
-
-        # Forced Constant Movement and Forced Shield
-        move_speed = player_speed 
-        player_shield_timer = 2 # Keep shield above zero to ensure activation
         
         if cheat_timer <= 0:
             cheat_mode = False
-            cheat_cooldown = 240 # 12 second cooldown (240 ticks)
-            player_shield_timer = 0 # Deactivate shield immediately
+            cheat_cooldown = 240
+            player_shield_timer = 0
     elif cheat_cooldown > 0:
         cheat_cooldown -= 1
     
-    dx = math.sin(player_angle) * move_speed + math.sin(player_angle + 1.57) * strafe
-    dz = -math.cos(player_angle) * move_speed - math.cos(player_angle + 1.57) * strafe
-    
-    nx, nz = player_pos[0] + dx, player_pos[2] + dz
-    gx, gz = int(round(nx / CELL_SIZE)), int(round(nz / CELL_SIZE))
-    
-    # CHECK OBSTACLE COLLISION FOR ROLLING ROCKS
-    is_blocked_by_rock = False
-    for rr in rolling_rocks:
-        dist_to_rock = math.sqrt((nx - rr['x'])**2 + (nz - rr['z'])**2)
-        if dist_to_rock < 22: # Obstacle collision radius
-            is_blocked_by_rock = True
-            if player_shield_timer <= 0: player_hp -= 0.2 # HP decrease on attack/contact
-            break
+    # Process movement only if not in orbital cheat mode
+    if not cheat_mode:
+        dx = math.sin(player_angle) * move_speed + math.sin(player_angle + 1.57) * strafe
+        dz = -math.cos(player_angle) * move_speed - math.cos(player_angle + 1.57) * strafe
+        
+        nx, nz = player_pos[0] + dx, player_pos[2] + dz
+        gx, gz = int(round(nx / CELL_SIZE)), int(round(nz / CELL_SIZE))
+        
+        is_blocked_by_rock = False
+        for rr in rolling_rocks:
+            dist_to_rock = math.sqrt((nx - rr['x'])**2 + (nz - rr['z'])**2)
+            if dist_to_rock < 22:
+                is_blocked_by_rock = True
+                if player_shield_timer <= 0: player_hp -= 0.2
+                break
 
-    if not is_blocked_by_rock and 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM and map_data[gx][gz] != C_WALL:
-        player_pos[0], player_pos[2] = nx, nz
-        if map_data[gx][gz] == C_BOSS_ARENA and not boss_active and not boss_defeated: 
-            boss_active = True
-        if map_data[gx][gz] == C_EXIT: 
-            if boss_defeated: level_complete = True
+        if not is_blocked_by_rock and 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM and map_data[gx][gz] != C_WALL:
+            player_pos[0], player_pos[2] = nx, nz
+            if map_data[gx][gz] == C_BOSS_ARENA and not boss_active and not boss_defeated: 
+                boss_active = True
+            if map_data[gx][gz] == C_EXIT: 
+                if boss_defeated: level_complete = True
 
     # --- PILL COLLECTION LOGIC ---
     remaining_pills = []
@@ -907,8 +919,9 @@ def keyboardListener(key, x, y):
     elif key == b'r':
         generate_level_3()
     elif key == b'l':
+        if cheat_mode: return # CAN NOT USE 'l' TO THROW ROCKS in cheat mode
         if boss_active:
-            boss_obj['hp'] -= 100
+            boss_obj['hp'] -= 50
             if boss_obj['hp'] <= 0:
                 boss_obj['hp'] = 0
                 boss_active = False
