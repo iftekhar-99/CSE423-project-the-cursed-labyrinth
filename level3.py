@@ -475,25 +475,25 @@ def draw_entities():
         glDisable(GL_BLEND)
 
 def draw_minimap():
-    glDisable(GL_DEPTH_TEST) 
+    glDisable(GL_DEPTH_TEST)
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
     gluOrtho2D(0, WINDOW_WIDTH, 0, WINDOW_HEIGHT)
     glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
-    
+
     map_size = 150; margin = 20
     # Background
     glColor4f(0.1, 0.1, 0.1, 0.7); glBegin(GL_QUADS)
     glVertex2f(margin, margin); glVertex2f(margin+map_size, margin)
     glVertex2f(margin+map_size, margin+map_size); glVertex2f(margin, margin+map_size); glEnd()
-    
+
     world_max = MAP_DIM * CELL_SIZE
-    
+
     # Player (Green)
     px = (player_pos[0] / world_max) * map_size
     pz = (player_pos[2] / world_max) * map_size
     glColor3f(0, 1, 0); glPointSize(5); glBegin(GL_POINTS)
     glVertex2f(margin + px, margin + pz); glEnd()
-    
+
     # Boss (Red)
     bx = (boss_obj['x'] / world_max) * map_size
     bz = (boss_obj['z'] / world_max) * map_size
@@ -509,12 +509,10 @@ def draw_minimap():
                 glColor3f(1, 1, 1); glPointSize(4); glBegin(GL_POINTS)
                 glVertex2f(margin + ex, margin + ez); glEnd()
 
-
-    glMatrixMode(GL_MODELVIEW)
-    glPopMatrix()
-    glMatrixMode(GL_PROJECTION)
-    glPopMatrix()
-    glMatrixMode(GL_MODELVIEW)
+    glPopMatrix() # Pop GL_MODELVIEW matrix
+    glMatrixMode(GL_PROJECTION) # Switch back to GL_PROJECTION
+    glPopMatrix() # Pop GL_PROJECTION matrix
+    glMatrixMode(GL_MODELVIEW) # Restore GL_MODELVIEW as the active matrix mode
     glEnable(GL_DEPTH_TEST)
 
 def draw_text(x, y, text, font=GLUT_BITMAP_HELVETICA_18, r=1, g=1, b=1):
