@@ -42,7 +42,7 @@ rotation_speed = 0.03
 key_states = {}
 shift_held = False 
 
-player_hp = 300.0
+player_hp = 100.0
 player_stamina = 100.0
 player_ammo = 50
 player_bombs = 2
@@ -105,7 +105,7 @@ def generate_level():
     drops = []
     respawning_spikes = []
     
-    player_hp = 300.0
+    player_hp = 100.0
     player_stamina = 100.0
     player_ammo = 50
     player_bombs = 2
