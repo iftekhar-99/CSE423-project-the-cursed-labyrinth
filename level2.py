@@ -36,8 +36,7 @@ player_pos = [0, 20, 0]
 player_angle = 1.57
 player_pitch = 0.0
 
-# Speed settings
-base_speed = 0.8       
+base_speed = 0.6        
 rotation_speed = 0.03   
 
 key_states = {}
@@ -174,7 +173,7 @@ def generate_level():
                     map_data[x][z] = C_SPIKE_HIDDEN
                 elif r < 0.05: 
                     moving_enemies.append({'x': wx, 'z': wz, 'hp': 3, 'shoot_timer': 0})
-                elif r < 0.07:
+                elif r < 0.12:
                     birds.append({
                         'x': wx, 'y': 35, 'z': wz, 
                         'cx': wx, 'cz': wz,
@@ -249,7 +248,8 @@ def update_logic():
                  boss_gate_closed = True; boss['active'] = True
         
         if map_data[curr_cell_x][curr_cell_z] == C_SPIKE_HIDDEN:
-             if math.sin(global_time * 2) > 0: player_hp -= 1.0
+             h = -15 + (math.sin(global_time * 2) + 1) * 15 
+             if h > 2: player_hp -= 1.0
 
     if diamonds_collected >= diamonds_needed: boss_arena_unlocked = True
 
@@ -269,8 +269,14 @@ def update_logic():
             ang = math.atan2(player_pos[2]-e['z'], player_pos[0]-e['x'])
             vx = math.cos(ang) * 0.8
             vz = math.sin(ang) * 0.8
-            if is_walkable(e['x'] - vx, e['z']): e['x'] -= vx
-            if is_walkable(e['x'], e['z'] - vz): e['z'] -= vz
+            
+            nx = e['x'] - vx
+            if is_walkable(nx + 5, e['z']) and is_walkable(nx - 5, e['z']):
+                 e['x'] = nx
+            
+            nz = e['z'] - vz
+            if is_walkable(e['x'], nz + 5) and is_walkable(e['x'], nz - 5):
+                 e['z'] = nz
         
         e['shoot_timer'] += 1
         if e['shoot_timer'] > 80 and dist < 400:
@@ -314,9 +320,13 @@ def update_logic():
                 map_data[mx][mz] = C_EMPTY
                 respawning_spikes.append({'x': mx, 'z': mz, 'timer': 600})
                 hit = True
+                
                 r = random.random()
-                if r < 0.4: drops.append({'x': mx*CELL_SIZE, 'z': mz*CELL_SIZE, 'y': 5, 'type': 'DIAMOND'})
-                elif r < 0.6: drops.append({'x': mx*CELL_SIZE, 'z': mz*CELL_SIZE, 'y': 5, 'type': 'AMMO'})
+                if r < 0.25: 
+                    drops.append({'x': mx*CELL_SIZE, 'z': mz*CELL_SIZE, 'y': 5, 'type': 'DIAMOND'})
+                elif r < 0.75: 
+                    drops.append({'x': mx*CELL_SIZE, 'z': mz*CELL_SIZE, 'y': 5, 'type': 'AMMO'})
+                    
             elif map_data[mx][mz] == C_WALL:
                 hit = True
         
@@ -445,64 +455,58 @@ def draw_bird(b):
     glPopMatrix()
     glPopMatrix()
 
-# [NEW] Fancy Boss Drawing
 def draw_boss_fancy(b):
     glPushMatrix()
     glTranslatef(b['x'], 30, b['z'])
     
-    # Global boss animation (bobbing + spinning)
+    # Global bobbing
     glTranslatef(0, math.sin(global_time * 3) * 5, 0)
-    glRotatef(global_time * 30, 0, 1, 0)
-
+    
     if b['stage'] == 1:
-        # --- STAGE 1: IRON FORTRESS ---
-        glColor3f(0.8, 0.1, 0.1) # Red Body
-        glutSolidCube(30)
+        # --- STAGE 1: SPIKED CRUSHER ---
+        glRotatef(global_time * 50, 0, 1, 0) 
+        glRotatef(global_time * 30, 1, 0, 0) 
         
-        # Metallic corners
-        glColor3f(0.4, 0.4, 0.4)
-        for dx in [-15, 15]:
-            for dy in [-15, 15]:
-                for dz in [-15, 15]:
-                    glPushMatrix()
-                    glTranslatef(dx, dy, dz)
-                    gluSphere(gluNewQuadric(), 5, 8, 8)
-                    glPopMatrix()
+        # Red Core Cube
+        glColor3f(0.9, 0.2, 0.2)
+        glutSolidCube(20)
         
-        # Gold Spikes
+        # Yellow Spikes
         glColor3f(1.0, 0.8, 0.0)
-        for r in [0, 90, 180, 270]:
+        # [FIXED] Tuple now has 4 elements: (angle, x, y, z)
+        directions = [
+            (0, 1,0,0), (90, 1,0,0), (-90, 1,0,0), 
+            (90, 0,1,0), (-90, 0,1,0), (180, 1,0,0) 
+        ]
+        for angle, x, y, z in directions:
             glPushMatrix()
-            glRotatef(r, 0, 1, 0)
-            glTranslatef(0, 0, 15)
-            gluCylinder(gluNewQuadric(), 8, 0, 20, 8, 2)
+            if angle != 0: glRotatef(angle, x, y, z)
+            glTranslatef(0, 0, 10)
+            glutSolidCone(5, 15, 10, 2)
             glPopMatrix()
-
+            
     else:
-        # --- STAGE 2: ALIEN MOTHERSHIP ---
-        # Dark Matter Core
-        glColor3f(0.2, 0.0, 0.8)
-        gluSphere(gluNewQuadric(), 18, 15, 15)
+        # --- STAGE 2: DARK STAR ---
+        glRotatef(math.sin(global_time)*10, 1, 0, 1)
         
-        # Spinning Energy Ring
+        glColor3f(0.6, 0.0, 0.8)
+        gluSphere(gluNewQuadric(), 15, 20, 20)
+        
         glColor3f(0.0, 1.0, 1.0)
         glPushMatrix()
         glRotatef(global_time * 100, 0, 1, 0)
-        for i in range(8):
-            glPushMatrix()
-            glRotatef(i * 45, 0, 1, 0)
-            glTranslatef(25, 0, 0)
-            glutSolidCube(6)
-            glPopMatrix()
+        glScalef(1, 0.1, 1)
+        glutWireSphere(25, 15, 15)
         glPopMatrix()
         
-        # Vertical Beam
-        glColor3f(1.0, 0.0, 1.0)
-        glPushMatrix()
-        glRotatef(-90, 1, 0, 0)
-        glTranslatef(0, 0, -30)
-        gluCylinder(gluNewQuadric(), 2, 2, 60, 6, 1)
-        glPopMatrix()
+        glColor3f(0.0, 1.0, 0.0)
+        for i in range(4):
+            glPushMatrix()
+            glRotatef(global_time*80 + i*90, 0, 1, 0) 
+            glRotatef(i*45, 0, 0, 1) 
+            glTranslatef(25, 0, 0)
+            glutSolidSphere(3, 10, 10)
+            glPopMatrix()
 
     glPopMatrix()
 
@@ -524,7 +528,17 @@ def draw_scene():
                 glPushMatrix()
                 glTranslatef(wx, WALL_HEIGHT/2, wz)
                 glScalef(1, WALL_HEIGHT/CELL_SIZE, 1)
-                glColor3f(0.4, 0.2, 0.1); glutSolidCube(CELL_SIZE)
+                
+                # Solid Wall
+                glColor3f(0.4, 0.2, 0.1) 
+                glutSolidCube(CELL_SIZE)
+                
+                # Black Border
+                glColor3f(0.0, 0.0, 0.0) 
+                glLineWidth(2.0)
+                glutWireCube(CELL_SIZE * 1.02)
+                glLineWidth(1.0)
+                
                 glPopMatrix()
             
             elif cell in [C_EMPTY, C_SPIKE_HIDDEN, C_BOSS_ARENA, C_EXIT]:
@@ -538,7 +552,8 @@ def draw_scene():
                 glEnd()
                 
                 if cell == C_SPIKE_HIDDEN:
-                    h = max(0, math.sin(global_time * 2) * 15)
+                    h = -15 + (math.sin(global_time * 2) + 1) * 15 
+                    
                     glColor3f(0.5, 0.5, 0.5)
                     glPushMatrix()
                     glTranslatef(wx, h, wz); glRotatef(-90, 1, 0, 0)
@@ -551,7 +566,6 @@ def draw_scene():
     for b in birds:
         draw_bird(b)
 
-    # [UPDATED] Call new fancy boss function
     if boss['active'] and not boss['dead']:
         draw_boss_fancy(boss)
 
@@ -630,7 +644,7 @@ def draw_hud():
     msg = "BOSS UNLOCKED!" if boss_arena_unlocked else "LOCKED"
     draw_text_2d(WINDOW_WIDTH//2-50, WINDOW_HEIGHT-40, msg)
     if game_over: draw_text_2d(WINDOW_WIDTH//2-60, WINDOW_HEIGHT//2, "GAME OVER (R)")
-    if level_complete: draw_text_2d(WINDOW_WIDTH//2-60, WINDOW_HEIGHT//2, "VICTORY (R)")
+    if level_complete: draw_text_2d(WINDOW_WIDTH//2-80, WINDOW_HEIGHT//2, "LEVEL 2 COMPLETE (R)")
 
     glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW)
 
@@ -676,9 +690,9 @@ def main():
     glutInit()
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
     glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT)
-    glutCreateWindow(b"Task 1 Final Funky Boss")
+    glutCreateWindow(b"Task 1 Final Fixed")
     
-    glutIgnoreKeyRepeat(GL_TRUE)
+    # glutIgnoreKeyRepeat(GL_TRUE) # Removed
     
     glEnable(GL_DEPTH_TEST)
     glMatrixMode(GL_PROJECTION)
