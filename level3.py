@@ -71,6 +71,7 @@ shield_pill_bag = 0
 player_shield_timer = 0 # 200 ticks = 10 seconds (approx)
 
 player_hp = 100.0
+hp_warning_timer = 0 # NEW: Timer for showing HP requirement message
 game_over = False
 level_complete = False 
 global_time = 0.0
@@ -117,7 +118,7 @@ def solve_maze():
 def generate_level_3():
     global map_data, player_pos, display_list, mines, particles, game_over, level_complete, player_hp, rock_count, thrown_rocks, animals, hole_locations
     global boss_active, boss_defeated, boss_obj, boulders, boss_minions, cheat_mode, shield_pill_bag, player_shield_timer, ground_pills
-    global rain_rocks, rain_active_timer, next_rain_trigger, cheat_timer, auto_gun_follow, cheat_cooldown, rolling_rocks
+    global rain_rocks, rain_active_timer, next_rain_trigger, cheat_timer, auto_gun_follow, cheat_cooldown, rolling_rocks, hp_warning_timer
     
     # Fill with Walls
     map_data = [[C_WALL for _ in range(MAP_DIM)] for _ in range(MAP_DIM)]
@@ -127,6 +128,7 @@ def generate_level_3():
     boss_active = False
     boss_defeated = False
     player_hp = 100.0
+    hp_warning_timer = 0
     rock_count = 10 # CHANGED FROM 0 TO 10
     shield_pill_bag = 0
     player_shield_timer = 0
@@ -248,8 +250,8 @@ def generate_level_3():
             animals.append({'x': rx*CELL_SIZE, 'z': rz*CELL_SIZE, 'home_x': rx*CELL_SIZE, 'home_z': rz*CELL_SIZE, 'angle': 0, 'active': True})
             placed += 1
 
-    # Initial Big Rocks
-    num_big_rocks = random.randint(15, 20)
+    # Initial Big Rocks - REDUCED NUMBER
+    num_big_rocks = random.randint(5, 8)
     placed_rocks = 0
     while placed_rocks < num_big_rocks:
         rx, rz = random.randint(2, MAP_DIM-2), random.randint(2, MAP_DIM-2)
@@ -498,7 +500,7 @@ def draw_minimap():
     bx = (boss_obj['x'] / world_max) * map_size
     bz = (boss_obj['z'] / world_max) * map_size
     glColor3f(1, 0, 0); glPointSize(8); glBegin(GL_POINTS)
-    glVertex2f(margin + bx, margin + bz); glEnd()
+    glVertex2f(margin + bx, margin + pz); glEnd() # Note: minimap axis flipped slightly relative to 3d
 
     # Exit (White)
     for x in range(MAP_DIM):
@@ -507,7 +509,7 @@ def draw_minimap():
                 ex = (x * CELL_SIZE / world_max) * map_size
                 ez = (z * CELL_SIZE / world_max) * map_size
                 glColor3f(1, 1, 1); glPointSize(4); glBegin(GL_POINTS)
-                glVertex2f(margin + ex, margin + ez); glEnd()
+                glVertex2f(margin + ez, margin + ex); glEnd()
 
     glPopMatrix() # Pop GL_MODELVIEW matrix
     glMatrixMode(GL_PROJECTION) # Switch back to GL_PROJECTION
@@ -536,9 +538,14 @@ def draw_hud():
     glDisable(GL_DEPTH_TEST)
     
     shield_status = f"SHIELD: {int(player_shield_timer/20)}s" if player_shield_timer > 0 else "OFF"
-    msg = f"LEVEL 3 | HP: {int(player_hp)}/200 | ROCKS: {rock_count} | BAG: {shield_pill_bag} PILLS | {shield_status}"
+    # UPDATED HP DISPLAY TO /300
+    msg = f"LEVEL 3 | HP: {int(player_hp)}/300 | ROCKS: {rock_count} | BAG: {shield_pill_bag} PILLS | {shield_status}"
     draw_text(20, WINDOW_HEIGHT - 30, msg)
     
+    # NEW HP REQUIREMENT WARNING
+    if hp_warning_timer > 0:
+        draw_text(WINDOW_WIDTH/2 - 180, WINDOW_HEIGHT/2 + 100, "NEED 150 HP TO ENTER BOSS AREA!", r=1.0, g=0.2, b=0.2)
+
     if rain_active_timer > 0:
         r_msg = "!!! ROCK RAIN !!!"
         draw_text(WINDOW_WIDTH/2 - 60, WINDOW_HEIGHT - 30, r_msg, r=1, g=0.5, b=0)
@@ -564,11 +571,15 @@ def update_physics():
     global player_pos, player_angle, global_time, player_hp, game_over, level_complete, mines, particles, rock_count, thrown_rocks, animals
     global boss_active, boss_obj, boss_defeated, boulders, boss_minions, cheat_mode, cheat_cooldown
     global shield_pill_bag, player_shield_timer, ground_pills, cheat_timer, auto_gun_follow
-    global rain_rocks, rain_active_timer, next_rain_trigger, rolling_rocks, display_list, map_data
+    global rain_rocks, rain_active_timer, next_rain_trigger, rolling_rocks, display_list, map_data, hp_warning_timer
     
     if game_over or level_complete: return
     global_time += 0.05
     
+    # Decrement warning timer
+    if hp_warning_timer > 0:
+        hp_warning_timer -= 1
+
     # --- AUTOMATIC SHIELD MANAGEMENT FROM BAG ---
     if player_shield_timer > 0:
         player_shield_timer -= 1
@@ -595,17 +606,22 @@ def update_physics():
         rr['vy'] += 0.4
         rr['y'] -= rr['vy']
         if rr['y'] <= 0:
-            create_explosion(rr['x'], 2, rr['z'])
+            # Impact check when the rock rain hits the ground level
             dist_rr = math.sqrt((player_pos[0]-rr['x'])**2 + (player_pos[2]-rr['z'])**2)
-            if dist_rr < 30 and player_shield_timer <= 0:
-                player_hp -= 20
+            if dist_rr < 15 and player_shield_timer <= 0:
+                # Check current player grid location
+                pgx, pgz = int(player_pos[0] // CELL_SIZE), int(player_pos[2] // CELL_SIZE)
+                if 0 <= pgx < MAP_DIM and 0 <= pgz < MAP_DIM and map_data[pgx][pgz] == C_BOSS_ARENA:
+                    player_hp -= 5 # Boss area rain damage
+                elif random.random() < 0.5:
+                    player_hp -= 10 # Normal rain damage (50% chance, 10 HP)
         else:
             active_rain_rocks.append(rr)
     rain_rocks = active_rain_rocks
 
     # --- ROLLING ROCKS LOGIC (RANDOM TIME & SPACE SPAWNING) ---
-    # Spawn a new big rock at random intervals (approx every 3-5 seconds)
-    if random.random() < 0.008: 
+    # Spawn a new big rock at random intervals - REDUCED PROBABILITY
+    if random.random() < 0.002: 
         rx, rz = random.randint(5, MAP_DIM-5), random.randint(5, MAP_DIM-5)
         if map_data[rx][rz] == C_EMPTY:
             rolling_rocks.append({'x': rx*CELL_SIZE, 'y': 15, 'z': rz*CELL_SIZE})
@@ -678,11 +694,16 @@ def update_physics():
                 break
 
         if not is_blocked_by_rock and 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM and map_data[gx][gz] != C_WALL:
-            player_pos[0], player_pos[2] = nx, nz
-            if map_data[gx][gz] == C_BOSS_ARENA and not boss_active and not boss_defeated: 
-                boss_active = True
-            if map_data[gx][gz] == C_EXIT: 
-                if boss_defeated: level_complete = True
+            # BOSS AREA ENTRY CHECK: Need at least 150 HP
+            if map_data[gx][gz] == C_BOSS_ARENA and player_hp < 150 and not boss_active and not boss_defeated:
+                hp_warning_timer = 60 # Show message for a while
+                pass # Block movement into boss area
+            else:
+                player_pos[0], player_pos[2] = nx, nz
+                if map_data[gx][gz] == C_BOSS_ARENA and not boss_active and not boss_defeated: 
+                    boss_active = True
+                if map_data[gx][gz] == C_EXIT: 
+                    if boss_defeated: level_complete = True
 
     # --- PILL COLLECTION LOGIC ---
     remaining_pills = []
@@ -718,6 +739,9 @@ def update_physics():
     
     # --- BOSS AI ---
     if boss_active:
+        # Trigger rain in the boss area constantly
+        if rain_active_timer <= 0: rain_active_timer = 160
+
         boss_obj['timer'] += 1
         bx, bz = boss_obj['x'], boss_obj['z']
         v_to_p_x, v_to_p_z = player_pos[0] - bx, player_pos[2] - bz
@@ -803,18 +827,18 @@ def update_physics():
         gx, gz = int(round(r['x']/CELL_SIZE)), int(round(r['z']/CELL_SIZE))
         hit_impact = False
         
-        # Check hitting rolling rocks (DESTROY ROLLING ROCKS WITH 'L')
-        for r_rock in rolling_rocks[:]:
-            dist_rr = math.sqrt((r['x']-r_rock['x'])**2 + (r['z']-r_rock['z'])**2)
-            if dist_rr < 25:
-                create_explosion(r_rock['x'], 15, r_rock['z'])
-                rolling_rocks.remove(r_rock)
-                hit_impact = True
-                break
-        
         if 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM:
             if map_data[gx][gz] == C_WALL: hit_impact = True
         
+        # --- NEW LOGIC: COLLISION WITH ROLLING BIG ROCKS ---
+        for rr in rolling_rocks[:]:
+            dist_p_rock = math.sqrt((r['x'] - rr['x'])**2 + (r['z'] - rr['z'])**2)
+            if dist_p_rock < 25: # Hitbox for destruction
+                create_explosion(rr['x'], 15, rr['z'])
+                rolling_rocks.remove(rr)
+                hit_impact = True
+                break 
+
         if boss_active:
             if math.sqrt((r['x']-boss_obj['x'])**2 + (r['z']-boss_obj['z'])**2) < 50:
                 boss_obj['hp'] -= 15; hit_impact = True
@@ -833,7 +857,7 @@ def update_physics():
                 if adist < 15 and 0 < r['y'] < 30: 
                     a['active'] = False
                     if random.random() < 0.5:
-                        player_hp = min(200.0, player_hp + random.randint(21, 40))
+                        player_hp = min(300.0, player_hp + random.randint(21, 40)) # INCREASED CAP TO 300
                     else: ground_pills.append({'x': a['x'], 'z': a['z']})
                     hit_impact = True; break
 
@@ -882,7 +906,7 @@ def mouseListener(button, state, x, y):
         thrown_rocks.append(new_rock)
 
 def keyboardListener(key, x, y):
-    global player_angle, cheat_mode, cheat_timer, cheat_cooldown, auto_gun_follow, player_shield_timer, shield_pill_bag, rock_count, boss_active, boss_obj, boss_defeated, map_data, display_list
+    global player_angle, cheat_mode, cheat_timer, cheat_cooldown, auto_gun_follow, player_shield_timer, shield_pill_bag, rock_count, boss_active, boss_obj, boss_defeated, map_data, display_list, rolling_rocks
     key_states[key] = True
 
     if key == b'c' and cheat_cooldown == 0:
@@ -919,7 +943,8 @@ def keyboardListener(key, x, y):
     elif key == b'r':
         generate_level_3()
     elif key == b'l':
-        if cheat_mode: return # CAN NOT USE 'l' TO THROW ROCKS in cheat mode
+        if cheat_mode: return 
+        
         if boss_active:
             boss_obj['hp'] -= 50
             if boss_obj['hp'] <= 0:
@@ -933,13 +958,14 @@ def keyboardListener(key, x, y):
                 display_list = None
         if rock_count > 0:
             rock_count -= 1
+            # Shoot a rock
             thrown_rocks.append({'x': player_pos[0], 'y': 25, 'z': player_pos[2], 'vx': math.sin(player_angle) * 8, 'vy': 2, 'vz': -math.cos(player_angle) * 8})
 
 def keyboardUpListener(key, x, y): 
     key_states[key] = False
 
 def specialKeyListener(key, x, y): key_states[key] = True
-def specialKeyUpListener(key, x, y): key_states[key] = False
+def specialKeyUpListener(key, x, p): key_states[key] = False
 
 def showScreen():
     glPushMatrix() # Push the current matrix onto the stack
