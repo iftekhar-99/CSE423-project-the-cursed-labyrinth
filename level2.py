@@ -5,9 +5,9 @@ from OpenGL.GLUT import GLUT_BITMAP_HELVETICA_18
 import math
 import random
 
-# ==========================================
-# Global Configuration
-# ==========================================
+
+# Global 
+
 WINDOW_WIDTH = 1024
 WINDOW_HEIGHT = 768
 
@@ -23,7 +23,7 @@ C_EXIT = 5
 
 map_data = []
 
-# --- ENTITY LISTS ---
+
 birds = []
 moving_enemies = []
 projectiles = []
@@ -31,7 +31,7 @@ player_bullets = []
 drops = []
 respawning_spikes = []
 
-# --- GAME STATE ---
+
 player_pos = [0, 20, 0]
 player_angle = 1.57
 player_pitch = 0.0
@@ -67,9 +67,7 @@ boss = {
 
 fovY = 60
 
-# ==========================================
-# Helper Functions
-# ==========================================
+
 def draw_text_2d(x, y, text):
     glRasterPos2f(x, y)
     for ch in text:
@@ -88,9 +86,7 @@ def is_walkable(x, z):
         return True
     return False
 
-# ==========================================
-# Map Generation
-# ==========================================
+
 def generate_level():
     global map_data, player_pos, birds, moving_enemies, boss, drops, respawning_spikes
     global player_hp, player_stamina, player_ammo, player_bombs, diamonds_collected, game_over
@@ -122,12 +118,12 @@ def generate_level():
     start_x, start_y = 5, 5
     boss_x, boss_y = MAP_DIM - 10, MAP_DIM - 10
 
-    # Clear Start
+
     for i in range(start_x-2, start_x+3):
         for j in range(start_y-2, start_y+3):
             if 0 <= i < MAP_DIM and 0 <= j < MAP_DIM: map_data[i][j] = C_EMPTY
 
-    # Path to Boss
+ 
     cx, cy = start_x, start_y
     while (abs(cx - boss_x) > 1 or abs(cy - boss_y) > 1):
         for ox in [-1, 0, 1]:
@@ -141,7 +137,7 @@ def generate_level():
             if cy < boss_y: cy += 1
             elif cy > boss_y: cy -= 1
 
-    # Rooms
+
     for _ in range(40):
         rx, ry = random.randint(5, MAP_DIM-5), random.randint(5, MAP_DIM-5)
         life = 100
@@ -152,13 +148,13 @@ def generate_level():
             rx = max(2, min(MAP_DIM-3, rx)); ry = max(2, min(MAP_DIM-3, ry))
             life -= 1
 
-    # Boss Arena
+ 
     for i in range(boss_x-8, boss_x+9):
         for j in range(boss_y-8, boss_y+9):
             if 0 <= i < MAP_DIM and 0 <= j < MAP_DIM: map_data[i][j] = C_BOSS_ARENA
     map_data[boss_x][boss_y+8] = C_EXIT
 
-    # Entities
+
     for x in range(MAP_DIM):
         for z in range(MAP_DIM):
             if map_data[x][z] == C_EMPTY:
@@ -192,9 +188,7 @@ def generate_level():
     
     player_pos = [start_x * CELL_SIZE, 20, start_y * CELL_SIZE]
 
-# ==========================================
-# Logic
-# ==========================================
+
 def update_logic():
     global player_hp, player_stamina, player_pos, player_ammo, player_bombs, diamonds_collected, global_time
     global game_over, level_complete, boss_arena_unlocked, boss_gate_closed, boss_stage
@@ -401,9 +395,7 @@ def detonate_bomb():
         for e in moving_enemies[:]:
             if check_collision(px, pz, 200, e['x'], e['z'], 10): moving_enemies.remove(e)
 
-# ==========================================
-# Drawing
-# ==========================================
+
 def draw_enemy(e):
     glPushMatrix()
     glTranslatef(e['x'], 15 + math.sin(global_time*5)*5, e['z'])
@@ -458,22 +450,21 @@ def draw_bird(b):
 def draw_boss_fancy(b):
     glPushMatrix()
     glTranslatef(b['x'], 30, b['z'])
-    
-    # Global bobbing
+
     glTranslatef(0, math.sin(global_time * 3) * 5, 0)
     
     if b['stage'] == 1:
-        # --- STAGE 1: SPIKED CRUSHER ---
+       
         glRotatef(global_time * 50, 0, 1, 0) 
         glRotatef(global_time * 30, 1, 0, 0) 
         
-        # Red Core Cube
+        
         glColor3f(0.9, 0.2, 0.2)
         glutSolidCube(20)
         
-        # Yellow Spikes
+        
         glColor3f(1.0, 0.8, 0.0)
-        # [FIXED] Tuple now has 4 elements: (angle, x, y, z)
+        
         directions = [
             (0, 1,0,0), (90, 1,0,0), (-90, 1,0,0), 
             (90, 0,1,0), (-90, 0,1,0), (180, 1,0,0) 
@@ -486,7 +477,7 @@ def draw_boss_fancy(b):
             glPopMatrix()
             
     else:
-        # --- STAGE 2: DARK STAR ---
+        
         glRotatef(math.sin(global_time)*10, 1, 0, 1)
         
         glColor3f(0.6, 0.0, 0.8)
@@ -529,11 +520,11 @@ def draw_scene():
                 glTranslatef(wx, WALL_HEIGHT/2, wz)
                 glScalef(1, WALL_HEIGHT/CELL_SIZE, 1)
                 
-                # Solid Wall
+                
                 glColor3f(0.4, 0.2, 0.1) 
                 glutSolidCube(CELL_SIZE)
                 
-                # Black Border
+                
                 glColor3f(0.0, 0.0, 0.0) 
                 glLineWidth(2.0)
                 glutWireCube(CELL_SIZE * 1.02)
@@ -692,7 +683,7 @@ def main():
     glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT)
     glutCreateWindow(b"Task 1 Final Fixed")
     
-    # glutIgnoreKeyRepeat(GL_TRUE) # Removed
+    
     
     glEnable(GL_DEPTH_TEST)
     glMatrixMode(GL_PROJECTION)
