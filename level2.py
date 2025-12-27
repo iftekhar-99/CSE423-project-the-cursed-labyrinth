@@ -34,13 +34,13 @@ player_pos = [0, 20, 0]
 player_angle = 1.57
 player_pitch = 0.0
 
-base_speed = 0.6        
+base_speed = 5       
 rotation_speed = 0.03   
 
 key_states = {}
 shift_held = False 
 
-player_hp = 300.0
+player_hp = 3000000000.0
 player_stamina = 100.0
 player_ammo = 50
 player_bombs = 2
@@ -99,9 +99,9 @@ def generate_level():
     drops = []
     respawning_spikes = []
     
-    player_hp = 300.0
+    player_hp = 300000.0
     player_stamina = 100.0
-    player_ammo = 50
+    player_ammo = 50000
     player_bombs = 2
     diamonds_collected = 0
     player_angle = 1.57
@@ -699,7 +699,7 @@ def main():
     glutInit()
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
     glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT)
-    glutCreateWindow(b"Task 1 Final Polished v3")
+    glutCreateWindow(b"level 1: iron defender")
     
     
     

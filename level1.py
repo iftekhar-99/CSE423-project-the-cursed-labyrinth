@@ -4,10 +4,7 @@ from OpenGL.GLU import *
 from OpenGL.GLUT import GLUT_BITMAP_HELVETICA_18, GLUT_BITMAP_TIMES_ROMAN_24
 import math
 import random
-import sys
 
-# Increase recursion depth just in case
-sys.setrecursionlimit(2000)
 
 # ==========================================
 # Global Configuration
@@ -41,7 +38,6 @@ animals = []
 gas_clouds = [] 
 daggers = []
 loot = []
-particles = [] 
 rain_drops = []
 poison_ghosts = [] 
 
@@ -76,7 +72,7 @@ key_states = {}
 player_hp = 5000.0
 max_player_hp = 8000.0
 player_ammo = 25000
-inventory = ["Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle" , "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle", "Immunity","Stamina Pill","Capture Bottle"] 
+inventory = ['Capture Bottle', 'Capture Bottle', 'Capture Bottle','Capture Bottle', 'Capture Bottle', 'Capture Bottle', 'Capture Bottle', 'Capture Bottle', 'Capture Bottle'] 
 immunity_timer = 0 
 has_green_gem = False
 
@@ -245,10 +241,7 @@ def generate_level_1():
 
     rooms.append(boss_room)
 
-    # --- CONNECT ROOMS (Fix: Prevent Player Box Trap) ---
-    # Update Boss Room center to point to the Gate Entrance
-    # Gate is at x = MAP_DIM - 36 (b_x - 1), y = MAP_DIM - 20 (mid_y)
-    # We target the tile just outside the gate to ensure the path leads to the entrance
+  
     boss_room['center'] = (MAP_DIM - 37, MAP_DIM - 20)
     
     for i in range(len(rooms) - 1):
@@ -315,18 +308,11 @@ def generate_level_1():
                     map_data[x][z] = C_ACID
                 else:
                     r = random.random()
-                    if r < 0.005:
-                        gas_clouds.append({'x': wx, 'z': wz, 'home_x': wx, 'home_z': wz, 'y_base': 40, 'dx': 0.2, 'dz': 0.2})
-                    elif r < 0.02:
+                    if r < 0.02:
                         enemies.append({'x': wx, 'z': wz, 'home_x': wx, 'home_z': wz})
                     elif r < 0.03:
                         animals.append({'x': wx, 'z': wz, 'home_x': wx, 'home_z': wz, 'angle': 0, 'active': True})
-                    elif r < 0.035:
-                        if random.random() < 0.7:
-                            loot.append({'x': wx, 'z': wz, 'type': 'AMMO'})
-                        else:
-                            loot.append({'x': wx, 'z': wz, 'type': 'STAMINA'})
-
+                   
     # Spawn Poison Ghosts
     ghost_attempts = 0
     while len(poison_ghosts) < 3 and ghost_attempts < 1000:
@@ -562,14 +548,6 @@ def draw_entities():
         glutSolidCone(1, 6, 8, 8)
         glPopMatrix()
         
-    # 7. Particles
-    for p in particles:
-        glPushMatrix()
-        glTranslatef(p['x'], p['y'], p['z'])
-        glScalef(p['life']/10.0, p['life']/10.0, p['life']/10.0) 
-        glColor3f(1.0, p['life']/20.0, 0.0) 
-        glutSolidCube(2)
-        glPopMatrix()
 
     # 8. Loot
     for l in loot:
@@ -580,7 +558,7 @@ def draw_entities():
             glColor3f(1, 0, 0)
             glutSolidSphere(5, 8, 8)
         elif l['type'] == 'AMMO':
-            glColor3f(0.5, 0.5, 0.5)
+            glColor3f(0.3, 0.3, 0.3)
             glScalef(0.5, 2, 0.5)
             glutSolidCube(5)
         elif l['type'] == 'IMMUNITY':
@@ -590,9 +568,6 @@ def draw_entities():
             glColor3f(0.0, 1.0, 0.8)
             glScalef(0.5, 2, 0.5)
             glutSolidCube(5)
-        elif l['type'] == 'GEM':
-            glColor3f(0.0, 1.0, 0.0)
-            glutSolidIcosahedron()
         elif l['type'] == 'BOTTLE':
             glColor3f(0.0, 0.5, 1.0)
             glScalef(0.6, 1.5, 0.6)
@@ -902,10 +877,6 @@ def update_physics():
                  rx = random.uniform(arena_min_x, arena_max_x)
                  rz = random.uniform(arena_min_z, arena_max_z)
                  
-                 # Check if spot is valid (not a wall)
-                 # Approximated by just picking random coordinates in the box
-                 # Since the arena is mostly empty/acid, this is safe enough.
-                 
                  d_p = math.sqrt((rx - player_pos[0])**2 + (rz - player_pos[2])**2)
                  if d_p > max_d:
                      max_d = d_p
@@ -914,10 +885,7 @@ def update_physics():
              boss_obj['x'] = best_tx
              boss_obj['z'] = best_tz
              boss_obj['teleport_cd'] = 200 # 3-4 seconds cooldown
-             
-             # Particles
-             for _ in range(30): particles.append({'x': boss_obj['x'], 'y': 10, 'z': boss_obj['z'], 'life': 30, 'dx': random.uniform(-3,3), 'dy': random.uniform(-3,3), 'dz': random.uniform(-3,3)})
-        
+                  
         if boss_obj['teleport_cd'] > 0: boss_obj['teleport_cd'] -= 1
 
         if boss_obj['timer'] % 800 == 0: 
@@ -926,8 +894,6 @@ def update_physics():
             boss_obj['rain_center_x'] = player_pos[0]
             boss_obj['rain_center_z'] = player_pos[2]
             
-        # [Requirement] MAINTAIN 20 Slimes and 20 Gas
-        # 1. Count current in arena
         current_slimes = 0
         for e in enemies:
              if in_boss_arena([e['x'], 0, e['z']], 0): current_slimes += 1
@@ -941,11 +907,23 @@ def update_physics():
              # Spawn Slime at Boss
              enemies.append({'x': boss_obj['x'], 'z': boss_obj['z'], 'home_x': boss_obj['x'], 'home_z': boss_obj['z']})
              current_slimes += 1
+
+        if current_slimes > 20:
+            kept = []
+            kept_slimes_in_arena = 0
+            for e in enemies:
+                if in_boss_arena([e['x'], 0, e['z']], 0):
+                    if kept_slimes_in_arena < 20:
+                        kept.append(e)
+                        kept_slimes_in_arena += 1
+                else:
+                    kept.append(e)
+            enemies = kept
              
         while current_gas < 20:
              # Spawn Gas at Boss, Random Direction
              angle = random.uniform(0, 6.28)
-             g_speed = 0.3
+             g_speed = 0.5
              gas_clouds.append({
                  'x': boss_obj['x'], 'z': boss_obj['z'], 
                  'y_base': 40, 'life': 1200, 
@@ -963,8 +941,8 @@ def update_physics():
         # Using 600 units radius (20 tiles)
         if immunity_timer <= 0:
             dist_to_rain = math.sqrt((player_pos[0] - boss_obj.get('rain_center_x', 0))**2 + (player_pos[2] - boss_obj.get('rain_center_z', 0))**2)
-            if dist_to_rain < 600:
-                 player_hp -= 0.05
+            if dist_to_rain < 700:
+                 player_hp -= 0.5
                  
         for _ in range(8):
              # Visuals concentrated in the area
@@ -979,9 +957,6 @@ def update_physics():
         
     # [Requirement] Exit Gate appears after boss defeat
     if boss_defeated:
-         # Check if player reaches the Exit Gate
-         # Gate location: Back of arena (MAP_DIM - 25, MAP_DIM - 35) -> same as boss spawn roughly?
-         # Let's put it at (MAP_DIM - 25, MAP_DIM - 35)
          ex_x = (MAP_DIM - 25) * CELL_SIZE
          ex_z = (MAP_DIM - 35) * CELL_SIZE
          dist_exit = math.sqrt((player_pos[0] - ex_x)**2 + (player_pos[2] - ex_z)**2)
@@ -1227,63 +1202,60 @@ def update_physics():
         if 0 <= gx < MAP_DIM and 0 <= gz < MAP_DIM and map_data[gx][gz] in [C_WALL, C_GATE]: hit = True
         
         if not hit:
+            # 1. Check Boss Collision
             if boss_active:
                 if math.sqrt((d['x']-boss_obj['x'])**2 + (d['z']-boss_obj['z'])**2) < 25:
                     hit = True
                     boss_obj['hp'] -= 50
-                    boss_obj['teleport_cd'] = max(0, boss_obj['teleport_cd'] - 50) # Reduce CD on hit
+                    boss_obj['teleport_cd'] = max(0, boss_obj['teleport_cd'] - 50)
                     
-                    # [Requirement] Move Away / Evade
-                    # Vector Player -> Boss
-                    vx = boss_obj['x'] - player_pos[0]
-                    vz = boss_obj['z'] - player_pos[2]
+                    # Move Away / Evade Logic...
+                    vx = boss_obj['x'] - player_pos[0]; vz = boss_obj['z'] - player_pos[2]
                     v_len = math.sqrt(vx*vx + vz*vz)
                     if v_len > 0: vx /= v_len; vz /= v_len
-                    
-                    # 1. Back away (Main component)
                     move_dist = 40
-                    
-                    # 2. Side shift (Evade)
                     side = 1 if random.random() < 0.5 else -1
-                    # Perpendicular: (-vz, vx)
-                    sx = -vz * side * 30
-                    sz = vx * side * 30
-                    
+                    sx = -vz * side * 30; sz = vx * side * 30
                     target_x = boss_obj['x'] + (vx * move_dist) + sx
                     target_z = boss_obj['z'] + (vz * move_dist) + sz
                     
-                    # [Requirement] CLAMP TO ARENA
-                    arena_min_x = (MAP_DIM - 35) * CELL_SIZE + 20
-                    arena_max_x = (MAP_DIM - 5) * CELL_SIZE - 20
-                    arena_min_z = (MAP_DIM - 35) * CELL_SIZE + 20
-                    arena_max_z = (MAP_DIM - 5) * CELL_SIZE - 20
-                    
+                    arena_min_x = (MAP_DIM - 35) * CELL_SIZE + 20; arena_max_x = (MAP_DIM - 5) * CELL_SIZE - 20
+                    arena_min_z = (MAP_DIM - 35) * CELL_SIZE + 20; arena_max_z = (MAP_DIM - 5) * CELL_SIZE - 20
                     boss_obj['x'] = max(arena_min_x, min(target_x, arena_max_x))
                     boss_obj['z'] = max(arena_min_z, min(target_z, arena_max_z))
-
-                    for _ in range(10): particles.append({'x': boss_obj['x'], 'y': 20, 'z': boss_obj['z'], 'life': 20, 'dx': random.uniform(-2,2), 'dy': random.uniform(-2,2), 'dz': random.uniform(-2,2)})
                     
                     if boss_obj['hp'] <= 0:
                         boss_active = False; boss_defeated = True; rain_active = False
-                        # [Requirement] Defeat Reward: Poison Gem Stone
                         loot.append({'x': boss_obj['x'], 'z': boss_obj['z'], 'type': 'POISON_GEM'})
-                        max_stamina = 120; player_stamina = 120
-                        max_player_hp = 120; player_hp = 120
+                        max_stamina = 120; player_stamina = 120; max_player_hp = 120; player_hp = 120
 
-            remaining = []
-            for e in enemies:
-                if math.sqrt((d['x']-e['x'])**2 + (d['z']-e['z'])**2) < 20:
-                    hit = True
-                    for _ in range(8): particles.append({'x': e['x'], 'y': 10, 'z': e['z'], 'life': 20, 'dx': random.uniform(-1,1), 'dy': random.uniform(0,2), 'dz': random.uniform(-1,1)})
-                    r = random.random()
-                    # Loot Drops: Increased AMMO/STAMINA, Reduced BOTTLE
-                    if r < 0.5: loot.append({'x': e['x'], 'z': e['z'], 'type': 'BOTTLE'}) # Reduced from 0.4
-                    elif r < 0.5: loot.append({'x': e['x'], 'z': e['z'], 'type': 'HP'})
-                    elif r < 0.8: loot.append({'x': e['x'], 'z': e['z'], 'type': 'AMMO'}) # Increased range
-                    elif r < 0.9: loot.append({'x': e['x'], 'z': e['z'], 'type': 'IMMUNITY'})
-                    elif r < 0.9: loot.append({'x': e['x'], 'z': e['z'], 'type': 'STAMINA'})
-                else: remaining.append(e)
-            enemies = remaining
+            # 2. Check Enemy Collision (ONLY if Boss wasn't hit)
+            if not hit:
+                remaining = []
+                for e in enemies:
+                    if math.sqrt((d['x']-e['x'])**2 + (d['z']-e['z'])**2) < 20:
+                        hit = True
+                        if not in_boss_arena([e['x'], 0, e['z']], 0):
+                            r = random.random()
+                            if r < 0.05: loot.append({'x': e['x'], 'z': e['z'], 'type': 'IMMUNITY'})
+                            elif r < 0.15: loot.append({'x': e['x'], 'z': e['z'], 'type': 'STAMINA'})
+                            elif r < 0.20: loot.append({'x': e['x'], 'z': e['z'], 'type': 'BOTTLE'})
+                            elif r < 0.70: loot.append({'x': e['x'], 'z': e['z'], 'type': 'AMMO'})
+                            elif r < 0.90: loot.append({'x': e['x'], 'z': e['z'], 'type': 'HP'})
+
+                        if boss_active and in_boss_arena([e['x'], 0, e['z']], 0):
+                            for _ in range(random.randint(2, 3)):
+                                remaining.append({
+                                    'x': boss_obj['x'], 
+                                    'z': boss_obj['z'], 
+                                    'home_x': boss_obj['x'], 
+                                    'home_z': boss_obj['z']
+                                })
+
+                    else: remaining.append(e)
+                enemies = remaining
+
+        # ... (Ghost and Animal logic follows, make sure they are also guarded by `if not hit:`) ...
         
         # Check Ghost Hit (Stun Effect)
         if not hit:
@@ -1292,7 +1264,6 @@ def update_physics():
                  if dist < 25:
                      hit = True
                      g['stun_timer'] = 180 # 3 Seconds Stun
-                     for _ in range(5): particles.append({'x': g['x'], 'y': 60, 'z': g['z'], 'life': 20, 'dx': random.uniform(-2,2), 'dy': random.uniform(-2,2), 'dz': random.uniform(-2,2)})
                      print("GHOST STUNNED! CATCH IT NOW!")
                      break
 
@@ -1307,12 +1278,6 @@ def update_physics():
         if not hit and d['life'] > 0 and d['y'] > 0: kept_daggers.append(d)
     daggers = kept_daggers
 
-    # Particles
-    active_p = []
-    for p in particles:
-        p['x'] += p['dx']; p['y'] += p['dy']; p['z'] += p['dz']; p['life'] -= 1
-        if p['life'] > 0: active_p.append(p)
-    particles = active_p
 
     # Loot
     kept_loot = []
@@ -1320,8 +1285,8 @@ def update_physics():
         if math.sqrt((player_pos[0]-l['x'])**2 + (player_pos[2]-l['z'])**2) < 20:
             if l['type'] == 'HP': 
                 if player_hp >= max_player_hp: inventory.append("HP Pill")
-                else: player_hp = min(max_player_hp, player_hp + 20)
-            elif l['type'] == 'AMMO': player_ammo += 20
+                else: player_hp = min(max_player_hp, player_hp + 30)
+            elif l['type'] == 'AMMO': player_ammo += 40
             elif l['type'] == 'IMMUNITY': inventory.append("Immunity")
             elif l['type'] == 'STAMINA': inventory.append("Stamina Pill")
             elif l['type'] == 'BOTTLE': inventory.append("Capture Bottle")
@@ -1419,11 +1384,11 @@ def init_fog():
 def main():
     glutInit(); glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
     glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT)
-    glutCreateWindow(b"The Cursed Labyrinth")
+    glutCreateWindow(b"level 1: The Cursed Labyrinth")
     glEnable(GL_DEPTH_TEST); init_fog(); generate_level_1()
     glutDisplayFunc(showScreen); glutIdleFunc(idle)
     glutKeyboardFunc(keyDown); glutKeyboardUpFunc(keyUp)
     glutSpecialFunc(specialDown); glutSpecialUpFunc(specialUp)
     glutMouseFunc(mouseListener); glutMainLoop()
 
-if __name__ == "__main__": main()
+if __name__ == "__main__": main()   

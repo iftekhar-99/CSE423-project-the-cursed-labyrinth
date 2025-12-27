@@ -127,9 +127,9 @@ def generate_level_3():
     level_complete = False
     boss_active = False
     boss_defeated = False
-    player_hp = 100.0
+    player_hp = 100000000.0
     hp_warning_timer = 0
-    rock_count = 10 # CHANGED FROM 0 TO 10
+    rock_count = 1000000 # CHANGED FROM 0 TO 10
     shield_pill_bag = 0
     player_shield_timer = 0
     boss_obj['hp'] = 700        # RESET TO 700
