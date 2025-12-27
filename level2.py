@@ -6,8 +6,6 @@ import math
 import random
 
 
-# Global 
-
 WINDOW_WIDTH = 1024
 WINDOW_HEIGHT = 768
 
@@ -42,7 +40,7 @@ rotation_speed = 0.03
 key_states = {}
 shift_held = False 
 
-player_hp = 100.0
+player_hp = 300.0
 player_stamina = 100.0
 player_ammo = 50
 player_bombs = 2
@@ -101,7 +99,7 @@ def generate_level():
     drops = []
     respawning_spikes = []
     
-    player_hp = 100.0
+    player_hp = 300.0
     player_stamina = 100.0
     player_ammo = 50
     player_bombs = 2
@@ -123,7 +121,6 @@ def generate_level():
         for j in range(start_y-2, start_y+3):
             if 0 <= i < MAP_DIM and 0 <= j < MAP_DIM: map_data[i][j] = C_EMPTY
 
- 
     cx, cy = start_x, start_y
     while (abs(cx - boss_x) > 1 or abs(cy - boss_y) > 1):
         for ox in [-1, 0, 1]:
@@ -137,7 +134,7 @@ def generate_level():
             if cy < boss_y: cy += 1
             elif cy > boss_y: cy -= 1
 
-
+   
     for _ in range(40):
         rx, ry = random.randint(5, MAP_DIM-5), random.randint(5, MAP_DIM-5)
         life = 100
@@ -148,13 +145,13 @@ def generate_level():
             rx = max(2, min(MAP_DIM-3, rx)); ry = max(2, min(MAP_DIM-3, ry))
             life -= 1
 
- 
+   
     for i in range(boss_x-8, boss_x+9):
         for j in range(boss_y-8, boss_y+9):
             if 0 <= i < MAP_DIM and 0 <= j < MAP_DIM: map_data[i][j] = C_BOSS_ARENA
     map_data[boss_x][boss_y+8] = C_EXIT
 
-
+    
     for x in range(MAP_DIM):
         for z in range(MAP_DIM):
             if map_data[x][z] == C_EMPTY:
@@ -176,12 +173,12 @@ def generate_level():
                         'angle': random.random()*6.28, 
                         'radius': random.randint(20, 60),
                         'speed': random.choice([0.02, -0.02]),
-                        'drop_timer': random.randint(100, 500)
+                        'drop_timer': random.randint(500, 1000)
                     })
 
     boss['x'] = boss_x * CELL_SIZE
     boss['z'] = boss_y * CELL_SIZE
-    boss['hp'] = 10
+    boss['hp'] = 15
     boss['active'] = False
     boss['dead'] = False
     boss['stage'] = 1
@@ -225,8 +222,8 @@ def update_logic():
 
     if key_states.get(GLUT_KEY_LEFT): player_angle -= rotation_speed
     if key_states.get(GLUT_KEY_RIGHT): player_angle += rotation_speed
-    if key_states.get(GLUT_KEY_UP): player_pitch = max(-1.0, min(1.0, player_pitch - 0.02))
-    if key_states.get(GLUT_KEY_DOWN): player_pitch = max(-1.0, min(1.0, player_pitch + 0.02))
+    
+    
     
     new_x = player_pos[0] + dx
     if is_walkable(new_x, player_pos[2]): player_pos[0] = new_x
@@ -285,11 +282,13 @@ def update_logic():
         
         b['drop_timer'] -= 1
         if b['drop_timer'] <= 0:
-            b['drop_timer'] = random.randint(300, 800)
-            if random.random() < 0.4:
-                drops.append({'x': b['x'], 'z': b['z'], 'y': 35, 'type': 'AMMO'})
-            else:
-                drops.append({'x': b['x'], 'z': b['z'], 'y': 35, 'type': 'EGG'})
+            b['drop_timer'] = random.randint(500, 1000) 
+            
+            if random.random() < 0.5:
+                if random.random() < 0.4:
+                    drops.append({'x': b['x'], 'z': b['z'], 'y': 35, 'type': 'AMMO'})
+                else:
+                    drops.append({'x': b['x'], 'z': b['z'], 'y': 35, 'type': 'EGG'})
 
     active_bullets = []
     for p in player_bullets:
@@ -308,21 +307,40 @@ def update_logic():
         
         if hit: continue
 
+
         mx, mz = int(p['x']/CELL_SIZE), int(p['z']/CELL_SIZE)
-        if 0 <= mx < MAP_DIM and 0 <= mz < MAP_DIM:
-            if map_data[mx][mz] == C_SPIKE_HIDDEN:
-                map_data[mx][mz] = C_EMPTY
-                respawning_spikes.append({'x': mx, 'z': mz, 'timer': 600})
-                hit = True
-                
-                r = random.random()
-                if r < 0.25: 
-                    drops.append({'x': mx*CELL_SIZE, 'z': mz*CELL_SIZE, 'y': 5, 'type': 'DIAMOND'})
-                elif r < 0.75: 
-                    drops.append({'x': mx*CELL_SIZE, 'z': mz*CELL_SIZE, 'y': 5, 'type': 'AMMO'})
+        
+        
+        offsets = [(0,0), (1,0), (-1,0), (0,1), (0,-1)]
+        
+        spike_hit = False
+        for ox, oz in offsets:
+            tx, tz = mx + ox, mz + oz
+            if 0 <= tx < MAP_DIM and 0 <= tz < MAP_DIM:
+                 if map_data[tx][tz] == C_SPIKE_HIDDEN:
+                     
+                     cx, cz = tx * CELL_SIZE, tz * CELL_SIZE
+                     if check_collision(p['x'], p['z'], 10, cx, cz, 15): 
+                         map_data[tx][tz] = C_EMPTY
+                         respawning_spikes.append({'x': tx, 'z': tz, 'timer': 600})
+                         hit = True
+                         spike_hit = True
+                         
+                         
+                         r = random.random()
+                         if r < 0.30: 
+                             drops.append({'x': tx*CELL_SIZE, 'z': tz*CELL_SIZE, 'y': 5, 'type': 'DIAMOND'})
+                         elif r < 0.60: 
+                             drops.append({'x': tx*CELL_SIZE, 'z': tz*CELL_SIZE, 'y': 5, 'type': 'AMMO'})
+                         
+                         break
+                 
+                 elif map_data[tx][tz] == C_WALL:
                     
-            elif map_data[mx][mz] == C_WALL:
-                hit = True
+                     cx, cz = tx * CELL_SIZE, tz * CELL_SIZE
+                     if check_collision(p['x'], p['z'], 2, cx, cz, 10):
+                        hit = True
+                        break
         
         if hit: continue
 
@@ -450,21 +468,21 @@ def draw_bird(b):
 def draw_boss_fancy(b):
     glPushMatrix()
     glTranslatef(b['x'], 30, b['z'])
+    
 
     glTranslatef(0, math.sin(global_time * 3) * 5, 0)
     
     if b['stage'] == 1:
-       
+        # SPIKED CRUSHER ---
         glRotatef(global_time * 50, 0, 1, 0) 
         glRotatef(global_time * 30, 1, 0, 0) 
         
-        
+        # Red Core Cube
         glColor3f(0.9, 0.2, 0.2)
         glutSolidCube(20)
         
-        
+        # Yellow Spikes
         glColor3f(1.0, 0.8, 0.0)
-        
         directions = [
             (0, 1,0,0), (90, 1,0,0), (-90, 1,0,0), 
             (90, 0,1,0), (-90, 0,1,0), (180, 1,0,0) 
@@ -477,7 +495,7 @@ def draw_boss_fancy(b):
             glPopMatrix()
             
     else:
-        
+        #  DARK STAR ---
         glRotatef(math.sin(global_time)*10, 1, 0, 1)
         
         glColor3f(0.6, 0.0, 0.8)
@@ -520,11 +538,11 @@ def draw_scene():
                 glTranslatef(wx, WALL_HEIGHT/2, wz)
                 glScalef(1, WALL_HEIGHT/CELL_SIZE, 1)
                 
-                
+                # Solid Wall
                 glColor3f(0.4, 0.2, 0.1) 
                 glutSolidCube(CELL_SIZE)
                 
-                
+                # Black Border
                 glColor3f(0.0, 0.0, 0.0) 
                 glLineWidth(2.0)
                 glutWireCube(CELL_SIZE * 1.02)
@@ -681,7 +699,7 @@ def main():
     glutInit()
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)
     glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT)
-    glutCreateWindow(b"Task 1 Final Fixed")
+    glutCreateWindow(b"Task 1 Final Polished v3")
     
     
     
